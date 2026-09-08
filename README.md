@@ -6,3 +6,6 @@ the tools:
 - `DoTweenAnimationPlayer`: a google slides transition-like animation tool that uses DOTween Pro. this tool allows the authoring of smooth animations in a data-driven way, without having to write any code
 - `FlipbookAnimation`: applies a flipbook-like animation to any UI objects that needs it. also supports states for components that inherit from `Selectable`
 - `SelectableEvents`: i actually hand-wrote this one lol. basically gives a full suite of unity events for any component that inhrit from `Selectable`
+
+
+you are free to use any or all of these tools in your own projects without proper coordination. no need to credit me either because technically i didn't do any of the coding work
