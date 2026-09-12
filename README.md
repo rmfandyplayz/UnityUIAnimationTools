@@ -1,5 +1,5 @@
 various tools i asked claude to write for me to use in my personal projects\
-they're mainly used to allow the making of ui animations to be much easier and streamlined
+they're mainly used to allow the making of ui animations to be much easier, streamlined, and error-free
 
 each folder is a different tool that can be dragged 'n dropped right into a project and functions right away\
 the tools:
