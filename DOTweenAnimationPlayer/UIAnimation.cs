@@ -90,6 +90,26 @@ namespace rmf_claude.DOTweenUI
         [NonSerialized] public Sequence RuntimeSequence;
         [NonSerialized] public Action RuntimeCallback;
 
+        /// <summary>
+        /// The current play's end callback, already wrapped in its own fire-once guard by
+        /// UIAnimationPlayer. Null when nothing is armed.
+        ///
+        /// This holds the WRAPPER rather than the caller's delegate on purpose: the guard has to
+        /// belong to one play, not to the animation. A callback that starts the same animation
+        /// again replaces everything here mid-teardown, and a guard living on the animation would
+        /// then let the old play's kill fire the new play's callback.
+        /// </summary>
+        [NonSerialized] public Action<UIAnimationEndReason> RuntimeEndCallback;
+
+        /// <summary>
+        /// Why the current play is ending, read by the sequence's OnKill backstop.
+        ///
+        /// Set to Stopped when a play is armed, so a kill from outside the player - DOTween.KillAll,
+        /// DOTween.Clear - never reports itself as a natural finish. UIAnimationPlayer.Kill
+        /// overwrites it with something more specific before killing.
+        /// </summary>
+        [NonSerialized] public UIAnimationEndReason PendingEndReason;
+
         public bool IsPlaying
         {
             get { return RuntimeSequence != null && RuntimeSequence.IsActive() && RuntimeSequence.IsPlaying(); }
@@ -98,6 +118,29 @@ namespace rmf_claude.DOTweenUI
         public bool HasLiveSequence
         {
             get { return RuntimeSequence != null && RuntimeSequence.IsActive(); }
+        }
+
+        /// <summary>
+        /// An independent copy for one player to own and mutate.
+        ///
+        /// UIAnimationPlayer clones every animation it takes from a shared UIAnimationAsset, and
+        /// that is a correctness requirement rather than an optimisation: RuntimeSequence,
+        /// RuntimeCallback and each step's resolved targets are ordinary instance fields, so two
+        /// players reading the same asset would overwrite each other's live sequences and animate
+        /// each other's objects.
+        ///
+        /// JsonUtility, not EditorJsonUtility - see UIAnimationContextMenu for why that matters,
+        /// and note this one has to work in a build too. OnComplete is re-pointed at the original
+        /// UnityEvent rather than round-tripped: its persistent call list is Unity's own
+        /// serialization detail, and a listener list is read-only at runtime, so sharing the one
+        /// instance is both safer and cheaper than copying it.
+        /// </summary>
+        public UIAnimation CloneForRuntime()
+        {
+            var clone = new UIAnimation();
+            JsonUtility.FromJsonOverwrite(JsonUtility.ToJson(this), clone);
+            clone.OnComplete = OnComplete;
+            return clone;
         }
 
         /// <summary>

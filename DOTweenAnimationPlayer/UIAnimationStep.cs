@@ -131,6 +131,13 @@ namespace rmf_claude.DOTweenUI
                  "or - if there isn't one - a shared 2D source the framework creates on first use.")]
         public AudioSource AudioSourceTarget;
 
+        [Tooltip("Optional path to a CHILD of the GameObject this player is on, e.g. \"Panel/Icon\".\n\n" +
+                 "Targets resolve in this order: the slot above, then this path, then the player's own " +
+                 "GameObject. Leave it empty and nothing changes.\n\n" +
+                 "Uses Transform.Find, so names must match exactly and only descendants are searched. " +
+                 "Inactive children are found. A path that matches nothing warns once and the step is skipped.")]
+        public string TargetPath;
+
         [Tooltip("How long the tween runs, in seconds. Does not include Delay.")]
         public float Duration = 0.25f;
 
@@ -224,6 +231,7 @@ namespace rmf_claude.DOTweenUI
         [NonSerialized] private bool baselineActive;
         [NonSerialized] private int shaderPropertyId;
         [NonSerialized] private bool shaderPropertyValid;
+        [NonSerialized] private bool targetPathMissed;
 
     #if UNITY_EDITOR
         /// <summary>
@@ -333,36 +341,47 @@ namespace rmf_claude.DOTweenUI
                 || type == UIAnimationStepType.ShakeAnchoredPosition;
         }
 
-        /// <summary>Fills empty target slots from the player own GameObject. Call before CaptureBaseline.</summary>
+        /// <summary>
+        /// Points this step at the thing it drives. Call before CaptureBaseline.
+        ///
+        /// Three tiers, in order: the direct reference in the step's own target slot, then
+        /// TargetPath resolved against the owner, then the owner's own component. An empty slot
+        /// and an empty path are the ordinary case and mean "the GameObject the player is on",
+        /// which is what makes an animation with no targets portable to any object.
+        /// </summary>
         public void Resolve(GameObject owner)
         {
+            GameObject host = ResolveHost(owner);
+
             switch (TargetKindOf(Type))
             {
                 case UIAnimationTargetKind.Rect:
-                    rect = RectTarget != null ? RectTarget : owner.GetComponent<RectTransform>();
+                    rect = RectTarget != null ? RectTarget : ComponentOn<RectTransform>(host);
                     break;
 
                 case UIAnimationTargetKind.CanvasGroup:
-                    canvasGroup = CanvasGroupTarget != null ? CanvasGroupTarget : owner.GetComponent<CanvasGroup>();
+                    canvasGroup = CanvasGroupTarget != null ? CanvasGroupTarget : ComponentOn<CanvasGroup>(host);
                     break;
 
                 case UIAnimationTargetKind.Graphic:
-                    graphic = GraphicTarget != null ? GraphicTarget : owner.GetComponent<Graphic>();
+                    graphic = GraphicTarget != null ? GraphicTarget : ComponentOn<Graphic>(host);
                     break;
 
                 case UIAnimationTargetKind.Material:
-                    materialInstance = MaterialTarget != null ? MaterialTarget : owner.GetComponent<UIMaterialInstance>();
+                    materialInstance = MaterialTarget != null ? MaterialTarget : ComponentOn<UIMaterialInstance>(host);
                     ResolveShaderProperty(owner);
                     break;
 
                 case UIAnimationTargetKind.GameObject:
-                    activeObject = ActiveTarget != null ? ActiveTarget : owner;
+                    activeObject = ActiveTarget != null ? ActiveTarget : host;
                     break;
 
                 case UIAnimationTargetKind.Audio:
                     // May stay null. The shared fallback source is resolved lazily at play time,
-                    // so a player that never actually fires a sound never creates one.
-                    audioSource = AudioSourceTarget != null ? AudioSourceTarget : owner.GetComponent<AudioSource>();
+                    // so a player that never actually fires a sound never creates one. A missed
+                    // path therefore lands on the shared source rather than skipping the sound -
+                    // this slot is optional by design, so an empty one is not a broken step.
+                    audioSource = AudioSourceTarget != null ? AudioSourceTarget : ComponentOn<AudioSource>(host);
 
                     if (Clip == null)
                     {
@@ -372,6 +391,74 @@ namespace rmf_claude.DOTweenUI
                     }
                     break;
             }
+        }
+
+        /// <summary>
+        /// The GameObject an empty target slot falls back to: the child named by TargetPath, or
+        /// the owner when no path is authored.
+        ///
+        /// Returns null when a path was authored and matched nothing, so the step ends up with no
+        /// target and is skipped with the ordinary missing-target warning. Falling back to the
+        /// owner instead would quietly animate the wrong object - a mistyped "Panel/Icon" would
+        /// scale the whole panel, which is far harder to spot than a step that does nothing.
+        ///
+        /// Warns from here, which runs once per Initialize, rather than per frame - the same
+        /// discipline as the shader property check below.
+        /// </summary>
+        private GameObject ResolveHost(GameObject owner)
+        {
+            targetPathMissed = false;
+
+            if (string.IsNullOrEmpty(TargetPath)) return owner;
+
+            // Transform.Find takes a slash-separated path and does find inactive children, which
+            // matters for a SetActive step whose whole job is to switch a hidden one back on.
+            Transform found = owner.transform.Find(TargetPath);
+            if (found != null) return found.gameObject;
+
+            targetPathMissed = true;
+
+            Debug.LogWarning(
+                "UIAnimationPlayer on '" + owner.name + "': a " + Type + " step has Target Path '" +
+                TargetPath + "', which matches no child of '" + owner.name + "'. The step will be skipped.",
+                owner);
+
+            return null;
+        }
+
+        /// <summary>GetComponent that tolerates the null host a missed TargetPath produces.</summary>
+        private static T ComponentOn<T>(GameObject host) where T : Component
+        {
+            return host != null ? host.GetComponent<T>() : null;
+        }
+
+        /// <summary>
+        /// Empties every direct target slot, and reports whether it had to.
+        ///
+        /// For UIAnimationAsset, which cannot hold one: a ScriptableObject has no scene to
+        /// reference, so a slot filled anyway - by a paste from a player, which carries live
+        /// instance IDs - would serialize to null at the next save with nothing said about it.
+        /// Cleared at authoring time instead, where it can be explained.
+        /// </summary>
+        public bool ClearDirectTargets()
+        {
+            bool any = RectTarget != null
+                || CanvasGroupTarget != null
+                || GraphicTarget != null
+                || MaterialTarget != null
+                || ActiveTarget != null
+                || AudioSourceTarget != null;
+
+            if (!any) return false;
+
+            RectTarget = null;
+            CanvasGroupTarget = null;
+            GraphicTarget = null;
+            MaterialTarget = null;
+            ActiveTarget = null;
+            AudioSourceTarget = null;
+
+            return true;
         }
 
         /// <summary>
@@ -887,6 +974,11 @@ namespace rmf_claude.DOTweenUI
 
         private bool HasTarget(string context)
         {
+            // A missed Target Path was already reported once, at Resolve time, and named the path
+            // rather than just the missing component. Saying it again on every Play - which is
+            // where this runs - would turn one clear warning into a stream of vaguer ones.
+            if (targetPathMissed) return false;
+
             switch (TargetKindOf(Type))
             {
                 case UIAnimationTargetKind.Rect:

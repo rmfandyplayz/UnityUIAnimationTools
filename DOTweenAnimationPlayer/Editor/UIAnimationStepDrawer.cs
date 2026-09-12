@@ -25,6 +25,12 @@ namespace rmf_claude.DOTweenUI
 
         private static readonly string[] AbsoluteBaselineOnly = { "Absolute", "Baseline" };
 
+        private const string AssetTargetReason =
+            "Not available in a shared animation set: a ScriptableObject cannot hold a reference " +
+            "to a scene object, so anything dropped here would be silently lost at the next save.\n\n" +
+            "Leave it empty to animate whichever GameObject the player is on, or use Target Path " +
+            "below to reach a named child of it.";
+
         private static GUIStyle boldFoldout;
 
         /// <summary>
@@ -102,7 +108,7 @@ namespace rmf_claude.DOTweenUI
             Field(ref layout, type);
             Field(ref layout, start);
 
-            DrawTargetSlot(ref layout, property, stepType);
+            DrawTarget(ref layout, property, stepType);
 
             bool impulse = UIAnimationStep.IsImpulse(stepType);
 
@@ -162,7 +168,15 @@ namespace rmf_claude.DOTweenUI
             if (UsesSnapping(stepType)) Field(ref layout, property.FindPropertyRelative("Snapping"));
         }
 
-        private void DrawTargetSlot(ref Layout layout, SerializedProperty property, UIAnimationStepType stepType)
+        /// <summary>
+        /// The target slot, and the Target Path beside it.
+        ///
+        /// On a UIAnimationAsset the slot is drawn DISABLED rather than hidden: a ScriptableObject
+        /// cannot hold a scene reference, so a slot you could fill would serialize to null at the
+        /// next save with nothing said about it. Showing it greyed out with the reason underneath
+        /// says what the alternative is; hiding it would just look like a missing feature.
+        /// </summary>
+        private void DrawTarget(ref Layout layout, SerializedProperty property, UIAnimationStepType stepType)
         {
             string field;
             string label;
@@ -201,10 +215,34 @@ namespace rmf_claude.DOTweenUI
             }
 
             SerializedProperty target = property.FindPropertyRelative(field);
-            Rect r = layout.Line();
-            if (!layout.Draw) return;
 
-            EditorGUI.PropertyField(r, target, new GUIContent(label, target.tooltip));
+            // Scoped by target object, not by type name: an asset is the only context where a
+            // direct reference cannot survive being saved.
+            bool inAsset = property.serializedObject.targetObject is UIAnimationAsset;
+
+            Rect slot = layout.Line();
+            if (layout.Draw)
+            {
+                using (new EditorGUI.DisabledScope(inAsset))
+                {
+                    EditorGUI.PropertyField(slot, target,
+                        new GUIContent(label, inAsset ? AssetTargetReason : target.tooltip));
+                }
+            }
+
+            if (inAsset)
+            {
+                Rect note = layout.Line();
+                if (layout.Draw)
+                {
+                    float indent = EditorGUIUtility.labelWidth;
+                    var noteRect = new Rect(note.x + indent, note.y, Mathf.Max(40f, note.width - indent), note.height);
+                    EditorGUI.LabelField(noteRect, "Shared asset: no scene reference. Use Target Path.",
+                        EditorStyles.miniLabel);
+                }
+            }
+
+            Field(ref layout, property.FindPropertyRelative("TargetPath"), "Target Path");
         }
 
         private void DrawImpulseFields(ref Layout layout, SerializedProperty property, UIAnimationStepType stepType)
@@ -378,10 +416,16 @@ namespace rmf_claude.DOTweenUI
             SerializedProperty target = property.FindPropertyRelative(field);
             if (target != null && target.objectReferenceValue != null) return target.objectReferenceValue.name;
 
+            // A path names the object just as well as a reference does, and reads better in a
+            // header than the owner would - the whole point of the row is which object moves.
+            SerializedProperty path = property.FindPropertyRelative("TargetPath");
+            if (path != null && !string.IsNullOrEmpty(path.stringValue)) return path.stringValue;
+
             Object owner = property.serializedObject.targetObject;
             var component = owner as Component;
 
-            return component != null ? component.gameObject.name + " (self)" : "self";
+            // An asset has no owner to name, so it says what an empty slot means there instead.
+            return component != null ? component.gameObject.name + " (self)" : "(owner)";
         }
     }
 }

@@ -33,6 +33,12 @@ Nothing in the folder is left in the global namespace, so it cannot collide with
 | **UI Animation Player** | any UI GameObject | Holds the named animations. This is the one you need. |
 | **UI Material Instance** | an Image / RawImage / TMP text | Only needed for shader property animation. Gives the element its own material so tweens can never write to the shared project asset. |
 
+And one asset, which is entirely optional:
+
+| Asset | Create with | Why |
+|---|---|---|
+| **UI Animation Set** | `Create → UI Animation → Animation Set` | One authored library of animations that many players share. See [Sharing animations](#sharing-animations-between-objects). |
+
 ---
 
 ## Creating an animation
@@ -74,7 +80,32 @@ All three new types take X/Y (Z is unused) and offer **Snapping** for whole-pixe
 
 Each step shows exactly one target slot, chosen by its type.
 
-**Leave it empty to target the GameObject the player is on.** Drag in a child or sibling to target something else. That's the whole system — no reflection, no name lookups.
+**Leave it empty to target the GameObject the player is on.** Drag in a child or sibling to target something else.
+
+Below the slot is an optional **Target Path**, and between them that's the whole system:
+
+| Filled in | What the step drives |
+|---|---|
+| The target slot | Exactly that object. Wins over everything below. |
+| **Target Path** only | The object at that path relative to the player, e.g. `Panel/Icon`. |
+| Neither | The GameObject the player is on. This is the ordinary case. |
+
+Target Path uses `transform.Find`, so names must match exactly, and — usefully — **inactive objects are found**, which is what lets a `SetActive` step switch a hidden child back on.
+
+**`..` works, and it is what makes the common layout portable.** A very ordinary way to author this is to put the player on a child object called something like `Animations` and point its steps at the *button above it*. That target is not a descendant, so it looks unshareable — but `..` is the player's parent and `../../Sibling` is a sibling of it, chained as deep as you like:
+
+| Target Path | Resolves to |
+|---|---|
+| *(empty)* | the player's own GameObject |
+| `Panel/Icon` | a descendant |
+| `..` | the player's parent — the `Animations`-child layout |
+| `../../Other` | a sibling of the parent |
+
+Verified against Unity 6000.3: `Find("..")` returns the parent and `Find("../../Name")` walks up twice and back down. Note that `..` is resolved one segment at a time like any other, so `../Self` means "a child of my parent named `Self`", not "me".
+
+Paths are resolved **once**, at `Awake`, not per frame. A path that matches nothing logs **one** warning naming the player and the path, and the step is skipped. It is deliberately not treated as "fall back to the player" — a mistyped `Panel/Icon` that silently scaled the whole panel would be far harder to spot than a step that visibly does nothing.
+
+An animation whose steps use only empty slots and paths is **portable**: it works on any object with the right children, which is what makes it worth sharing.
 
 - `GraphicColor` / `GraphicAlpha` take a **Graphic**, which covers `Image`, `RawImage`, legacy `Text` **and TextMeshProUGUI**. There is no separate TMP step type.
 - `AnchoredPosition`, `PunchAnchoredPosition`, `SizeDelta`, `OffsetMin` and `OffsetMax` show an X/Y field — Z is not used.
@@ -266,9 +297,47 @@ A single step's delay is also left alone. Delays are flipped *within* a joined g
 
 ---
 
+## Sharing animations between objects
+
+Right-click copy/paste moves an animation between objects, but it makes a **copy** — retune the original and the forty copies stay as they were. When that stops being reasonable, put the animation in a **UI Animation Set** instead.
+
+`Create → UI Animation → Animation Set` makes one. It holds the same list of animations, authored in the same inspector. Assign it to a player's **Shared** slot and that player can play everything in it.
+
+```
+UI Animation Player
+  Use Unscaled Time                ✔
+  Kill On Disable                  ✔
+  Shared                           Menu Panels (UI Animation Set)   ← the library
+  Animations                       0                                ← plus anything local
+```
+
+**Local animations win.** A player plays its own list first and then everything from the set whose name it hasn't already used, so one panel can override just the `Show` out of a shared set while still getting the shared `Hide`, `Press` and `Attention`. That override is the point of the feature; the asset inspector warns you when a player shadows one of its names, because otherwise you can spend ten minutes tuning a curve that never plays.
+
+This is opt-in and it is not the default. Authoring straight onto the player is fewer clicks and is right for anything only one object does.
+
+### What an asset can't hold
+
+**A ScriptableObject cannot reference a scene object.** So the direct target slots are disabled when you author inside a set, with the reason shown under them. Use **Target Path** for anything relative — a child, or `..` for the parent — or leave the slot empty for the player's own GameObject. Those are enough to write a genuinely reusable animation, and needing them is what keeps a shared animation honest about being shared.
+
+If a step arrives with a target anyway — pasting one copied off a player carries live references — the asset clears it and says so, rather than letting it serialize to null at the next save with nothing said.
+
+### Previewing a set
+
+An animation set has nothing of its own to animate, so its inspector borrows a scene player: drop one into **Preview On** and the Play / Start / Stop buttons run the ordinary player preview, with the same capture, restore, Undo entry and one-at-a-time rule. The player has to actually have the set in its Shared slot — it plays what its own merge produced, not what any asset happens to contain — and the buttons say so and disable themselves when it doesn't.
+
+The Preview On slot is not saved into the asset. It couldn't be: a scene reference is the one thing an asset cannot keep, which is what the whole feature is working around.
+
+### Things worth knowing
+
+- Each player takes its **own copy** of the set's animations at `Awake`. It has to: resolved targets and the live sequence are per-object state, so two players sharing one asset would otherwise animate each other's objects. The cost is that **editing the set at runtime does not reach players that have already started** — and that assigning `Shared` from code after `Awake` does nothing.
+- Right-click copy/paste and the mirror commands work on a set exactly as they do on a player, so an animation can move between the two in either direction.
+- Two animations with the same name inside one set: the first wins, the second is unreachable, and the asset warns.
+
+---
+
 ## Previewing
 
-The Inspector has **Play / Start / Stop** buttons per animation, and they work **without entering play mode**.
+The Inspector has **Play / Start / Stop** buttons per animation, and they work **without entering play mode**. The list includes animations from the Shared set as well as local ones.
 
 | Button | Does |
 |---|---|
@@ -300,7 +369,7 @@ Each animation has a free-text **`Notes`** box. Nothing reads it — it's for yo
 [SerializeField] private UIAnimationPlayer anim;
 
 anim.Play("Show");
-anim.Play("Hide", () => gameObject.SetActive(false));   // onComplete callback
+anim.Play("Hide", () => gameObject.SetActive(false));   // fires on a natural finish only
 
 // Play returns the live Sequence, so coroutines work:
 yield return anim.Play("Show").WaitForCompletion();
@@ -311,6 +380,7 @@ Full API:
 ```csharp
 Sequence Play(string name);
 Sequence Play(string name, Action onComplete);
+Sequence Play(string name, Action<UIAnimationEndReason> onEnd);   // always fires, exactly once
 
 void Stop(string name, bool complete = false);
 void StopAll(bool complete = false);
@@ -325,6 +395,42 @@ bool Has(string name);
 void ApplyFromState(string name);   // snap to an animation's FROM values without playing
 void CaptureBaseline();             // re-capture resting values at runtime
 ```
+
+### Knowing how an animation ended
+
+`Play(name, Action)` fires **only on a natural finish**. That's the right rule for an authored `On Complete`, and the wrong one for code:
+
+```csharp
+anim.Play("Hide", () => Destroy(gameObject));   // leaks the object if anything interrupts the hide
+```
+
+The third overload closes that. Its callback fires **exactly once, whatever happens** — never zero times, never twice — and says how it ended:
+
+```csharp
+anim.Play("Hide", reason =>
+{
+    if (reason == UIAnimationEndReason.Completed) Destroy(gameObject);
+    else                                          gameObject.SetActive(false);
+});
+```
+
+| `UIAnimationEndReason` | When |
+|---|---|
+| `Completed` | Ran to its natural end — or `Stop(name, complete: true)`, or an animation with nothing to play. The only reason that also fires `On Complete`. |
+| `Interrupted` | Another `Play` cut it short: the same animation restarting, or a different one with **Interrupt Others**. |
+| `Stopped` | `Stop`, `StopAll`, or a kill issued from outside the player such as `DOTween.KillAll`. |
+| `Disabled` | The GameObject or the player component was disabled while it was running. |
+| `Destroyed` | The player was destroyed while an animation was still live. |
+| `NotFound` | No animation of that name exists, so nothing played. A typo is a runtime failure like any other, and a caller waiting on a callback that never comes is what this overload exists to prevent. |
+
+Two things to know about it:
+
+- **Destroying an *enabled* object reports `Disabled`, not `Destroyed`.** Unity runs `OnDisable` before `OnDestroy` and gives no way to know a destroy is coming, so that's reported honestly rather than guessed at. `Destroyed` is what you get when **Kill On Disable** is off, or the object was already inactive. If you only care whether the animation finished, compare against `Completed` and ignore the rest.
+- **A kill from outside the player counts too.** `DOTween.KillAll()` or `DOTween.Clear()` elsewhere in the project resolves every armed callback as `Stopped` rather than leaving callers waiting.
+
+The plain `Action` overload and the authored `On Complete` UnityEvent are **unchanged** by any of this — still a natural finish only, because that's what "finished" means to someone who wired up an event in the Inspector. When both are present, `On Complete` runs first and `onEnd` last, so an authored event still gets to run before a caller's `Destroy`.
+
+One source-level wrinkle: `Play(name, null)` is now ambiguous between two overloads and needs a cast. `Play(name)` is unaffected.
 
 ### From UnityEvents
 
@@ -362,7 +468,7 @@ In play mode the inspector shows **Play / Start / Stop** buttons per animation s
 **Read this bit.**
 
 - `Play(name)` kills that animation's own running sequence, and — because **Interrupt Others** is on by default — every *other* animation on the same player too. So `Play("Show"); Play("Hide");` leaves only `Hide` running. Untick **Interrupt Others** for something that should layer on top, like a looping pulse.
-- **An interrupted animation never fires its callback.** Neither the `Action` nor the UnityEvent. If the callback fired, the animation genuinely finished.
+- **An interrupted animation never fires its callback.** Neither the `Action` nor the UnityEvent. If the callback fired, the animation genuinely finished. The `Action<UIAnimationEndReason>` overload is the exception and always fires — see [Knowing how an animation ended](#knowing-how-an-animation-ended).
 - **Disabling the GameObject kills running animations** (`Kill On Disable`, on by default) — loops stop and callbacks do *not* fire. The next `Play` re-snaps its FROM values, so nothing ends up visually corrupted. Untick it to let animations run through a disable.
 - Sequences are linked to the GameObject with `KillOnDestroy` and also killed in `OnDestroy`, so destroying objects or changing scenes leaves no orphaned tweens.
 - **Use Unscaled Time** is on by default, so UI still animates while `Time.timeScale == 0`. Leave it on for pause menus.
@@ -497,9 +603,11 @@ Tip: once one step exists, `+` **duplicates the last step** rather than creating
 
 ## Reuse
 
-There are no ScriptableObject presets — steps hold scene references, so an asset-based preset would need a whole target-binding layer. Instead:
+In rough order of how much you're sharing:
 
-- **Right-click copy/paste** of a single animation or step, across objects — see [Copying animations and steps](#copying-animations-and-steps).
-- Leave targets empty (= self) and an animation is fully portable.
+- **Right-click copy/paste** of a single animation or step, across objects — see [Copying animations and steps](#copying-animations-and-steps). Makes a copy; edits don't propagate.
 - **Copy Component / Paste Component Values** to move a whole configured player to another element.
-- Prefab variants for anything genuinely shared.
+- **A UI Animation Set** when the same animation is on enough objects that retuning them by hand stops being reasonable — one authored copy, many players, and per-object override by name. See [Sharing animations](#sharing-animations-between-objects).
+- Prefab variants for anything genuinely shared as a whole object.
+
+What makes any of these work is portable authoring: leave targets empty (= the player's own GameObject) and reach everything else by **Target Path** — `Panel/Icon` down, `..` up — and the animation stops caring which object it's on.

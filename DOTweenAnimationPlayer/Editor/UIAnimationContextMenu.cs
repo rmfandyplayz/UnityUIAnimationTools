@@ -31,6 +31,11 @@ namespace rmf_claude.DOTweenUI
     ///   right-click the Animations list  -> Paste Animation (add to end / mirrored)
     ///   right-click the Steps list       -> Paste Step (add to end / mirrored)
     ///
+    /// On a UIAnimationPlayer and on a UIAnimationAsset alike, so an animation can be copied out
+    /// of a player and into a shared set or back. Pasting INTO an asset carries the source's
+    /// target references with it, and UIAnimationAsset.OnValidate clears them - a scene reference
+    /// is exactly what an asset cannot keep.
+    ///
     /// One registration for the whole folder. Two handlers on contextualPropertyMenu would
     /// append to the same menu in whatever order their static constructors happened to run.
     /// </summary>
@@ -59,8 +64,9 @@ namespace rmf_claude.DOTweenUI
 
             // SerializedProperty.type reports the UNQUALIFIED type name, so a namespace does not
             // disambiguate it and any other project's "UIAnimation" would match the strings below.
-            // Requiring our own component as the inspected object is what actually scopes this.
-            if (!(property.serializedObject.targetObject is UIAnimationPlayer)) return;
+            // Requiring one of our own objects as the inspected one is what actually scopes this.
+            Object inspected = property.serializedObject.targetObject;
+            if (!(inspected is UIAnimationPlayer) && !(inspected is UIAnimationAsset)) return;
 
             // The property handed to this callback is only valid for the duration of the call,
             // and menu items run later. Copy it so the deferred handler has something to use.
