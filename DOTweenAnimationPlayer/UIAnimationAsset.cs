@@ -2,8 +2,8 @@
 // UI Animation Utility
 //
 // AI-GENERATED. Authored by Claude (Anthropic) via Claude Code, September 2026,
-// to a written design brief by the project author. Not hand-written by the
-// Twindrill Goose team. See the README.md beside this file for usage.
+// to a written design brief by the project author.
+// See the README.md beside this file for usage.
 // -----------------------------------------------------------------------------
 
 using System.Collections.Generic;
