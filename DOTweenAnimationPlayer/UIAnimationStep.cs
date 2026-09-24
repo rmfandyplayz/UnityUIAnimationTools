@@ -7,7 +7,10 @@
 // -----------------------------------------------------------------------------
 
 using System;
+using System.Collections.Generic;
 using DG.Tweening;
+using DG.Tweening.Core;
+using DG.Tweening.Plugins;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -74,6 +77,22 @@ namespace rmf_claude.DOTweenUI
     {
         AfterPrevious = 0,
         WithPrevious = 1,
+    }
+
+    /// <summary>
+    /// How a movement path joins its points.
+    /// Serialized as an integer - see the note on UIAnimationStepType. Numbers are the contract.
+    ///
+    /// Curved is 0 on purpose: a step added with + on a serialized list arrives zero-filled, and
+    /// a smooth curve is what someone ticking "Use Custom Movement Path" almost always wants.
+    /// </summary>
+    public enum UIAnimationPathShape
+    {
+        /// <summary>A smooth curve through every point (DOTween's Catmull-Rom path).</summary>
+        Curved = 0,
+
+        /// <summary>Straight lines between the points, with a sharp corner at each one.</summary>
+        Linear = 1,
     }
 
     /// <summary>Which value fields a step type actually uses. Drives the inspector drawer.</summary>
@@ -216,6 +235,20 @@ namespace rmf_claude.DOTweenUI
 
         [Tooltip("Round positions to whole pixels each frame. Useful for pixel art, causes stepping otherwise.")]
         public bool Snapping;
+
+        [Tooltip("Travel to To along a path through the points below, instead of in a straight line.\n\n" +
+                 "The ease still applies - it controls how far along the path the step is, so an Out ease " +
+                 "decelerates into To along the curve.")]
+        public bool UseCustomPath;
+
+        [Tooltip("Curved = a smooth curve through every point.\n" +
+                 "Linear = straight lines between the points, with a sharp corner at each one.")]
+        public UIAnimationPathShape PathShape = UIAnimationPathShape.Curved;
+
+        [Tooltip("Points the step passes through, in order, between where it starts and To.\n\n" +
+                 "They are in the same space as To and follow To's mode: Absolute = as typed, Baseline = an " +
+                 "offset from the resting value, Current = an offset from wherever the step starts.")]
+        public List<Vector3> Waypoints = new List<Vector3>();
 
         // Runtime only. Never serialized, so authored data is never mutated by play mode.
         [NonSerialized] private RectTransform rect;
@@ -409,12 +442,8 @@ namespace rmf_claude.DOTweenUI
         {
             targetPathMissed = false;
 
-            if (string.IsNullOrEmpty(TargetPath)) return owner;
-
-            // Transform.Find takes a slash-separated path and does find inactive children, which
-            // matters for a SetActive step whose whole job is to switch a hidden one back on.
-            Transform found = owner.transform.Find(TargetPath);
-            if (found != null) return found.gameObject;
+            GameObject host = FindHost(owner, TargetPath);
+            if (host != null) return host;
 
             targetPathMissed = true;
 
@@ -424,6 +453,23 @@ namespace rmf_claude.DOTweenUI
                 owner);
 
             return null;
+        }
+
+        /// <summary>
+        /// The quiet half of ResolveHost: the owner when no path is authored, the object at the path
+        /// when it matches, null when it does not. Public so the scene-view path editor resolves a
+        /// step's target by exactly the rules playback uses, without the warning - it runs every
+        /// repaint.
+        /// </summary>
+        public static GameObject FindHost(GameObject owner, string targetPath)
+        {
+            if (owner == null) return null;
+            if (string.IsNullOrEmpty(targetPath)) return owner;
+
+            // Transform.Find takes a slash-separated path and does find inactive children, which
+            // matters for a SetActive step whose whole job is to switch a hidden one back on.
+            Transform found = owner.transform.Find(targetPath);
+            return found != null ? found.gameObject : null;
         }
 
         /// <summary>GetComponent that tolerates the null host a missed TargetPath produces.</summary>
@@ -708,7 +754,12 @@ namespace rmf_claude.DOTweenUI
             bool relative = IsRelative;
             Tween tween;
 
-            switch (Type)
+            if (HasPath)
+            {
+                tween = BuildPathTween(applyFromImmediately);
+                if (tween == null) return null;
+            }
+            else switch (Type)
             {
                 case UIAnimationStepType.AnchoredPosition:
                 {
@@ -864,6 +915,179 @@ namespace rmf_claude.DOTweenUI
             }
 
             return tween;
+        }
+
+        /// <summary>
+        /// True for the step types a movement path can drive: every vector step except Rotation,
+        /// which DOTween rotates as a quaternion rather than through the Euler values a path would
+        /// pass through, and punch/shake, which have no endpoint to travel to.
+        /// </summary>
+        public static bool SupportsPath(UIAnimationStepType type)
+        {
+            switch (type)
+            {
+                case UIAnimationStepType.AnchoredPosition:
+                case UIAnimationStepType.LocalPosition:
+                case UIAnimationStepType.Scale:
+                case UIAnimationStepType.SizeDelta:
+                case UIAnimationStepType.OffsetMin:
+                case UIAnimationStepType.OffsetMax:
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>True for vector steps whose Z is unused - the rect views, which are Vector2.</summary>
+        public static bool IsTwoDimensional(UIAnimationStepType type)
+        {
+            return type == UIAnimationStepType.AnchoredPosition
+                || type == UIAnimationStepType.PunchAnchoredPosition
+                || type == UIAnimationStepType.SizeDelta
+                || type == UIAnimationStepType.OffsetMin
+                || type == UIAnimationStepType.OffsetMax;
+        }
+
+        /// <summary>
+        /// True when this step travels along its authored path. A path with no points is a straight
+        /// line, which the ordinary tween already is, so an empty list falls back to that - the step
+        /// then behaves exactly as it would with the box unticked.
+        /// </summary>
+        public bool HasPath
+        {
+            get { return UseCustomPath && SupportsPath(Type) && Waypoints != null && Waypoints.Count > 0; }
+        }
+
+        /// <summary>
+        /// Builds the path version of a vector step: start, then each waypoint, then To.
+        ///
+        /// DOTween has path shortcuts only for Transform.position/localPosition, so this uses the
+        /// generic PathPlugin with a getter and setter - the same call DOTween's own Rigidbody module
+        /// makes - which is what lets one path drive anchoredPosition, sizeDelta or anything else.
+        ///
+        /// Three things about the path plugin that this works around, all measured against DOTween
+        /// 1.3.030:
+        ///   - It needs a Transform as the tween's target and throws a NullReferenceException at
+        ///     startup without one, so SetTarget is not optional here.
+        ///   - It ignores From(). The start is whatever the getter returns at startup, so an
+        ///     authored FROM is supplied by having the getter return it, and the setter writes it on
+        ///     the first update like any other From.
+        ///   - It prepends the start as the first point unless the first waypoint already equals it,
+        ///     so the waypoint list never includes the start itself.
+        ///
+        /// SetRelative works as it does on every other step: every point, To included, is offset by
+        /// the value at startup. That is why waypoints follow To's mode rather than having their own.
+        /// </summary>
+        private Tween BuildPathTween(bool applyFromImmediately)
+        {
+            RectTransform target = rect;
+            DOGetter<Vector3> read;
+            DOSetter<Vector3> write;
+
+            switch (Type)
+            {
+                case UIAnimationStepType.AnchoredPosition:
+                    read = () => target.anchoredPosition;
+                    write = v => target.anchoredPosition = v;
+                    break;
+
+                case UIAnimationStepType.LocalPosition:
+                    read = () => target.localPosition;
+                    write = v => target.localPosition = v;
+                    break;
+
+                case UIAnimationStepType.Scale:
+                    read = () => target.localScale;
+                    write = v => target.localScale = v;
+                    break;
+
+                case UIAnimationStepType.SizeDelta:
+                    read = () => target.sizeDelta;
+                    write = v => target.sizeDelta = v;
+                    break;
+
+                case UIAnimationStepType.OffsetMin:
+                    read = () => target.offsetMin;
+                    write = v => target.offsetMin = v;
+                    break;
+
+                case UIAnimationStepType.OffsetMax:
+                    read = () => target.offsetMax;
+                    write = v => target.offsetMax = v;
+                    break;
+
+                default:
+                    return null;
+            }
+
+            // DOTween's own shortcuts round inside the plugin; the path plugin has no snapping
+            // option, so it happens on the way out instead. Scale never offered Snapping.
+            if (Snapping && Type != UIAnimationStepType.Scale)
+            {
+                DOSetter<Vector3> unsnapped = write;
+                write = v => unsnapped(new Vector3(Mathf.Round(v.x), Mathf.Round(v.y), Mathf.Round(v.z)));
+            }
+
+            if (HasAuthoredStart)
+            {
+                Vector3 from = Flatten(ResolveVector(FromMode, FromVector));
+                read = () => from;
+
+                // The same thing From(value, setImmediately: true) does on every other step.
+                if (applyFromImmediately) write(from);
+            }
+
+            Vector3[] points = PathPoints();
+            PathType shape = PathShape == UIAnimationPathShape.Linear ? PathType.Linear : PathType.CatmullRom;
+
+            // Transparent gizmo: DOTween draws a running path in the Scene view at the raw point
+            // values, which for anchoredPosition or sizeDelta are not world positions and would
+            // draw a misleading line somewhere unrelated. The path editor draws the real one.
+            var path = new DG.Tweening.Plugins.Core.PathCore.Path(shape, points, PathResolution, Color.clear);
+
+            var tween = DOTween.To(PathPlugin.Get(), read, write, path, Duration);
+            tween.SetTarget(target);
+            if (IsRelative) tween.SetRelative(true);
+
+            return tween;
+        }
+
+        /// <summary>
+        /// Subdivisions per segment for a curved path. DOTween's default; 5 is usually enough and
+        /// UI paths are short, but there are never enough path steps for this to cost anything.
+        /// </summary>
+        private const int PathResolution = 10;
+
+        /// <summary>
+        /// The waypoints then To, resolved against To's mode, with Z dropped on the rect views and
+        /// consecutive duplicates removed. A duplicate point makes a zero-length segment, and a
+        /// waypoint added from the inspector starts on top of its neighbour until it is moved.
+        /// </summary>
+        private Vector3[] PathPoints()
+        {
+            var points = new List<Vector3>(Waypoints.Count + 1);
+
+            for (int i = 0; i <= Waypoints.Count; i++)
+            {
+                Vector3 raw = i < Waypoints.Count ? Waypoints[i] : ToVector;
+                Vector3 point = Flatten(ResolveVector(ToMode, raw));
+
+                if (points.Count > 0 && points[points.Count - 1] == point) continue;
+                points.Add(point);
+            }
+
+            return points.ToArray();
+        }
+
+        /// <summary>
+        /// Zeroes Z on the rect views. The inspector edits them as X/Y, so a Z left behind by an
+        /// earlier Type would otherwise bend a path through a dimension that is then thrown away.
+        /// </summary>
+        private Vector3 Flatten(Vector3 value)
+        {
+            if (IsTwoDimensional(Type)) value.z = 0f;
+            return value;
         }
 
         /// <summary>

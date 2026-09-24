@@ -165,7 +165,140 @@ namespace rmf_claude.DOTweenUI
             // explicit FROM value - so it is only offered when Use From is off.
             DrawEndpoint(ref layout, property, "To", "ToMode", kind, stepType, !useFrom.boolValue);
 
+            if (UIAnimationStep.SupportsPath(stepType)) DrawPath(ref layout, property, stepType);
+
             if (UsesSnapping(stepType)) Field(ref layout, property.FindPropertyRelative("Snapping"));
+        }
+
+        /// <summary>
+        /// The movement path: one checkbox, and everything else only once it is ticked, because a
+        /// path is the exception rather than the rule and should cost nothing to read past.
+        ///
+        /// Points are drawn as rows of their own rather than as Unity's list control, so they line
+        /// up under From/To, show X/Y on the rect views, and can say which space they are in - the
+        /// mode column shows To's mode, since that is the mode the points follow.
+        /// </summary>
+        private void DrawPath(ref Layout layout, SerializedProperty property, UIAnimationStepType stepType)
+        {
+            SerializedProperty usePath = property.FindPropertyRelative("UseCustomPath");
+
+            // Checkbox on the left with the label running across the row: the label is too long
+            // for the label column at ordinary inspector widths, and a left toggle is the usual
+            // Unity idiom for "switch this section on".
+            Rect toggleRow = layout.Line();
+            if (layout.Draw)
+            {
+                var content = new GUIContent("Use Custom Movement Path", usePath.tooltip);
+
+                EditorGUI.BeginProperty(toggleRow, content, usePath);
+                EditorGUI.BeginChangeCheck();
+                bool value = EditorGUI.ToggleLeft(toggleRow, content, usePath.boolValue);
+                if (EditorGUI.EndChangeCheck()) usePath.boolValue = value;
+                EditorGUI.EndProperty();
+            }
+
+            if (!usePath.boolValue) return;
+
+            Field(ref layout, property.FindPropertyRelative("PathShape"), "Path Shape");
+
+            SerializedProperty points = property.FindPropertyRelative("Waypoints");
+            SerializedProperty toMode = property.FindPropertyRelative("ToMode");
+            bool twoD = UIAnimationStep.IsTwoDimensional(stepType);
+
+            if (points.arraySize == 0)
+            {
+                Rect empty = layout.Line();
+                if (layout.Draw)
+                {
+                    var noteRect = new Rect(empty.x + LabelWidth, empty.y, Mathf.Max(40f, empty.width - LabelWidth), empty.height);
+                    EditorGUI.LabelField(noteRect, "No points yet - the step still moves in a straight line.",
+                        EditorStyles.miniLabel);
+                }
+            }
+
+            for (int i = 0; i < points.arraySize; i++)
+            {
+                Rect r = layout.Line();
+                if (!layout.Draw) continue;
+
+                var labelRect = new Rect(r.x, r.y, LabelWidth, r.height);
+                var modeRect = new Rect(r.x + LabelWidth, r.y, ModeWidth, r.height);
+                var removeRect = new Rect(r.xMax - RemoveWidth, r.y, RemoveWidth, r.height);
+                var valueRect = new Rect(modeRect.xMax + 4f, r.y,
+                    Mathf.Max(40f, removeRect.x - 4f - (modeRect.xMax + 4f)), r.height);
+
+                EditorGUI.LabelField(labelRect, new GUIContent("Point " + (i + 1), points.tooltip));
+
+                string mode = toMode.enumValueIndex >= 0 ? toMode.enumDisplayNames[toMode.enumValueIndex] : "";
+                EditorGUI.LabelField(modeRect, new GUIContent(mode, "Points follow To's mode."), EditorStyles.miniLabel);
+
+                SerializedProperty point = points.GetArrayElementAtIndex(i);
+                DrawVector(valueRect, point, twoD);
+
+                if (GUI.Button(removeRect, new GUIContent("-", "Remove this point."), EditorStyles.miniButton))
+                {
+                    points.DeleteArrayElementAtIndex(i);
+                    break;
+                }
+            }
+
+            Rect buttons = layout.Line();
+            if (!layout.Draw) return;
+
+            float x = buttons.x + LabelWidth;
+            float width = buttons.xMax - x;
+            var addRect = new Rect(x, buttons.y, Mathf.Floor(width * 0.4f) - 2f, buttons.height);
+            var editRect = new Rect(addRect.xMax + 4f, buttons.y, buttons.xMax - addRect.xMax - 4f, buttons.height);
+
+            if (GUI.Button(addRect, new GUIContent("Add Point",
+                    "Adds a point halfway between the last one and To. Drag it into place in the Scene view, " +
+                    "or type it in."), EditorStyles.miniButton))
+            {
+                int index = points.arraySize;
+                Vector3 suggested = UIAnimationPathEditor.SuggestNewPoint(property, stepType);
+
+                points.arraySize = index + 1;
+                points.GetArrayElementAtIndex(index).vector3Value = suggested;
+            }
+
+            string reason;
+            bool canEdit = UIAnimationPathEditor.CanEdit(property, stepType, out reason);
+            bool editing = UIAnimationPathEditor.IsEditing(property);
+
+            using (new EditorGUI.DisabledScope(!canEdit))
+            {
+                var content = new GUIContent(editing ? "Done Editing" : "Edit Path in Scene",
+                    canEdit
+                        ? "Shows this path in the Scene view with handles you can drag. Click a + to add a point, " +
+                          "Ctrl+click a point to remove it, Esc to finish."
+                        : reason);
+
+                bool toggled = GUI.Toggle(editRect, editing, content, EditorStyles.miniButton);
+
+                if (toggled != editing)
+                {
+                    if (toggled) UIAnimationPathEditor.Begin(property);
+                    else UIAnimationPathEditor.Stop();
+                }
+            }
+        }
+
+        private const float RemoveWidth = 20f;
+
+        private static void DrawVector(Rect rect, SerializedProperty value, bool twoDimensional)
+        {
+            if (twoDimensional)
+            {
+                Vector3 current = value.vector3Value;
+
+                EditorGUI.BeginChangeCheck();
+                Vector2 edited = EditorGUI.Vector2Field(rect, GUIContent.none, current);
+                if (EditorGUI.EndChangeCheck()) value.vector3Value = new Vector3(edited.x, edited.y, current.z);
+            }
+            else
+            {
+                EditorGUI.PropertyField(rect, value, GUIContent.none);
+            }
         }
 
         /// <summary>
@@ -289,11 +422,9 @@ namespace rmf_claude.DOTweenUI
                 mode.enumValueIndex = index;
             }
 
-            if (kind == UIAnimationValueKind.Vector && IsTwoDimensional(stepType))
+            if (kind == UIAnimationValueKind.Vector)
             {
-                Vector3 current = value.vector3Value;
-                Vector2 edited = EditorGUI.Vector2Field(valueRect, GUIContent.none, current);
-                value.vector3Value = new Vector3(edited.x, edited.y, current.z);
+                DrawVector(valueRect, value, UIAnimationStep.IsTwoDimensional(stepType));
             }
             else
             {
@@ -311,15 +442,6 @@ namespace rmf_claude.DOTweenUI
                 case UIAnimationValueKind.Color: return prefix + "Color";
                 default: return prefix + "Vector";
             }
-        }
-
-        private static bool IsTwoDimensional(UIAnimationStepType type)
-        {
-            return type == UIAnimationStepType.AnchoredPosition
-                || type == UIAnimationStepType.PunchAnchoredPosition
-                || type == UIAnimationStepType.SizeDelta
-                || type == UIAnimationStepType.OffsetMin
-                || type == UIAnimationStepType.OffsetMax;
         }
 
         private static bool UsesSnapping(UIAnimationStepType type)
@@ -388,6 +510,20 @@ namespace rmf_claude.DOTweenUI
                 {
                     SerializedProperty ease = property.FindPropertyRelative("EaseType");
                     if (ease.enumValueIndex >= 0) tail += "   " + ease.enumDisplayNames[ease.enumValueIndex];
+                }
+            }
+
+            // Only when the path actually takes effect, so the header never claims a path the
+            // step is not following - an empty point list still moves in a straight line.
+            if (UIAnimationStep.SupportsPath(type) && property.FindPropertyRelative("UseCustomPath").boolValue)
+            {
+                int count = property.FindPropertyRelative("Waypoints").arraySize;
+
+                if (count > 0)
+                {
+                    SerializedProperty shape = property.FindPropertyRelative("PathShape");
+                    string shapeName = shape.enumValueIndex >= 0 ? shape.enumDisplayNames[shape.enumValueIndex] : "";
+                    tail += "   " + shapeName + " path, " + count + (count == 1 ? " point" : " points");
                 }
             }
 

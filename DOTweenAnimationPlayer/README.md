@@ -55,6 +55,8 @@ Each step's collapsed header reads like a timeline line: `AFTER   Logo (Scale)  
 
 `SetActive` and `PlaySound` are **instant** — they happen at a point in the timeline rather than over one, so they show a `Delay` but no `Duration` and no easing.
 
+The position and size steps can also follow a curved or zig-zag route to `To` instead of a straight line — see [Movement paths](#movement-paths).
+
 ### Sizing a RectTransform
 
 Four step types write the same two rect corners from different directions. That's what makes them useful, and also what makes them fight:
@@ -188,6 +190,55 @@ Punch and shake steps have no FROM/TO — they show `Punch` / `Strength` instead
 
 ---
 
+## Movement paths
+
+By default a step moves in a straight line from its start to `To`. Tick **Use Custom Movement Path** (under `To`) and it travels through a list of points on the way instead — an arc for a card flying into a hand, a swoop, a zig-zag.
+
+```
+To                    Absolute   X 250    Y 150
+☑ Use Custom Movement Path
+Path Shape            Curved
+Point 1               Absolute   X -50    Y 200    [-]
+Point 2               Absolute   X 150    Y -100   [-]
+                      [ Add Point ]  [ Edit Path in Scene ]
+```
+
+This is **not** the ease. The path is *where* the object goes; the ease is still *how fast* it gets there — it controls how far along the path the step is, so `Out Quad` still decelerates into `To`, just along the curve. Speed along the path is constant apart from the ease, so a long segment and a short one are covered at the same rate.
+
+| Setting | Meaning |
+|---|---|
+| `Curved` | A smooth curve through every point (DOTween's Catmull-Rom path). The default. |
+| `Linear` | Straight lines between the points, with a sharp corner at each. |
+
+**Points follow `To`'s mode**, and the mode column beside each point shows which one that is. `Absolute` = as typed, `Baseline` = an offset from the resting value, `Current` = an offset from wherever the step starts. That's what makes a `To: Current` path portable — the same swoop works from wherever the object happens to be. The start of the path is the `From` value when `Use From` is on, and otherwise wherever the object is when the step begins, exactly as without a path.
+
+Available on `AnchoredPosition`, `LocalPosition`, `SizeDelta`, `OffsetMin`, `OffsetMax` and `Scale` — every vector step except `Rotation` (DOTween rotates through a quaternion, not through the Euler values a path would pass through) and punch/shake (no endpoint to travel to). A path through `SizeDelta` or `Scale` is real and works — grow wide, then tall — it just can't be drawn in the Scene view.
+
+With the box ticked but no points, the step still moves in a straight line. Unticking the box keeps the points, so you can switch the path off to compare without losing it.
+
+### Editing a path in the Scene view
+
+On a position step, **Edit Path in Scene** draws the path where the object will actually travel, with handles:
+
+| Do | Get |
+|---|---|
+| Drag a numbered point | Moves it |
+| Drag `To` (green ring) or `From` (grey ring, when `Use From` is on) | Moves that endpoint |
+| Click a small **+** on a segment | Adds a point there |
+| Ctrl+click (Cmd on Mac) a numbered point | Removes it — it turns red while Ctrl is held over it |
+| `Esc`, **Done**, or the button again | Stops editing |
+
+Points move in the canvas plane, so a drag can't push one off the canvas in depth even in a perspective Scene view. Every drag is an ordinary Undo step, and it marks prefab overrides exactly as typing into the Inspector would. While editing, the move tool is hidden and clicks on empty space are ignored — the same way Unity's own *Edit Collider* works — so a missed handle can't move the object or select something else.
+
+Things worth knowing:
+
+- **The path is drawn from where the object sits now.** A `Baseline` endpoint is the resting value, and in edit mode that's simply the current value. A step without `Use From` starts wherever the object is when the step runs, which the editor can only take to be where it is now — so a path in the *second* step of an animation is drawn from the object's resting place, not from where step one leaves it.
+- Only position steps can be edited in the Scene view, only on a player (a Shared set has no object to draw on), and not in play mode. The button disables itself and says why.
+- Selecting something else, entering play mode or recompiling ends the edit.
+- The drawn curve reproduces DOTween's own path maths, including its end conventions, and was checked against a real path tween: the object stays on the line.
+
+---
+
 ## Sound
 
 A **PlaySound** step fires a clip at its point in the timeline. Put one first in a `Press` animation and you have a button click; put one at `Delay 0.15` in a `Show` and it lands with the scale bounce.
@@ -277,6 +328,7 @@ This rewrites the steps once, at author time — there is no runtime reverse mod
 | Ease preset | **Unchanged.** A mirrored `Hide` keeps the `Out Quart` its `Show` was authored with |
 | Custom curve | **Unchanged** |
 | `To: Current` relative offset | The same offset negated |
+| Movement path points | Reversed, so the mirror walks the same path backwards. On a `To: Current` step they're also re-based onto the new start. A `Linear` path retraces exactly; a `Curved` one lands within a pixel or two, because DOTween shapes the two ends of a curve slightly differently |
 | `SetActive` on | `SetActive` off |
 | Punch / shake | Unchanged — they already return to where they started |
 | `PlaySound` | Keeps its clip. If a hide needs a different sound, swap it afterwards |
@@ -294,6 +346,8 @@ For those steps the mirror does the best it can: `Use From` is switched **on** a
 That guess is right for an animation authored away from rest, and a no-op for one that already ends at rest — if a mirrored step does nothing, this is why, and the fix is to type the `To` you actually want.
 
 A single step's delay is also left alone. Delays are flipped *within* a joined group; a lone step's delay is a gap between groups, which can't be expressed on the step itself.
+
+A movement path has a similar limit. Its points follow `To`'s mode, and two cases change that mode: swapping a `From` and `To` authored in *different* modes, and the no-`Use From` case above when the old `To` was `Absolute` (the new `To` is `Baseline`). Converting the points between the two needs the resting value, which only exists at runtime, so the points are reversed but **read in a different space** — and the mirror logs a second warning naming those steps.
 
 ---
 
