@@ -150,11 +150,12 @@ namespace rmf_claude.DOTweenUI
                  "or - if there isn't one - a shared 2D source the framework creates on first use.")]
         public AudioSource AudioSourceTarget;
 
-        [Tooltip("Optional path to a CHILD of the GameObject this player is on, e.g. \"Panel/Icon\".\n\n" +
-                 "Targets resolve in this order: the slot above, then this path, then the player's own " +
-                 "GameObject. Leave it empty and nothing changes.\n\n" +
-                 "Uses Transform.Find, so names must match exactly and only descendants are searched. " +
-                 "Inactive children are found. A path that matches nothing warns once and the step is skipped.")]
+        [Tooltip("Optional path from the GameObject this player is on to the one to animate, e.g. \"Panel/Icon\".\n\n" +
+                 "Only used when the slot above is empty - a direct reference always wins, and the path is " +
+                 "then ignored. With both empty, the player's own GameObject is animated.\n\n" +
+                 "Uses Transform.Find, so names must match exactly. \"..\" steps up to the parent, so " +
+                 "\"../Icon\" is a sibling. Inactive objects are found. A path that matches nothing warns " +
+                 "once and the step is skipped.")]
         public string TargetPath;
 
         [Tooltip("How long the tween runs, in seconds. Does not include Delay.")]
@@ -174,7 +175,9 @@ namespace rmf_claude.DOTweenUI
                  "Going above 1 or below 0 overshoots, which is how you build a bounce.")]
         public AnimationCurve Curve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
 
-        [Tooltip("Tick to force a starting value. Untick to tween from wherever the property already is.")]
+        [Tooltip("FROM = the step starts from an authored value and travels to To.\n" +
+                 "TO = no starting value: the step travels to To from wherever the property already is.\n" +
+                 "Click to switch.")]
         public bool UseFrom;
 
         [Tooltip("Absolute = the value as typed.\nBaseline = resting value captured at Awake, plus the value as an offset.")]
@@ -182,7 +185,7 @@ namespace rmf_claude.DOTweenUI
 
         [Tooltip("Absolute = the value as typed.\n" +
                  "Baseline = resting value captured at Awake, plus the value as an offset. Use this to land on the authored state.\n" +
-                 "Current = relative to the value when the tween starts. Only available when Use From is off.")]
+                 "Current = relative to the value when the tween starts. Only offered while the button reads TO (no From).")]
         public UIAnimationEndpointMode ToMode = UIAnimationEndpointMode.Absolute;
 
         [Tooltip("Starting value for this step.")]
@@ -262,16 +265,35 @@ namespace rmf_claude.DOTweenUI
         [NonSerialized] private float baselineFloat;
         [NonSerialized] private Color baselineColor;
         [NonSerialized] private bool baselineActive;
+
+        // The Type the baseline was captured under, so RestoreBaseline writes back the property that
+        // was actually read even if Type has been changed in the Inspector since.
+        [NonSerialized] private UIAnimationStepType baselineType;
+
         [NonSerialized] private int shaderPropertyId;
         [NonSerialized] private bool shaderPropertyValid;
         [NonSerialized] private bool targetPathMissed;
 
     #if UNITY_EDITOR
         /// <summary>
-        /// Set by the inspector's edit-mode preview so PlaySound steps do nothing. Static because
-        /// preview is a single, editor-only, one-at-a-time operation; there is nothing to scope it to.
+        /// Set by the inspector's edit-mode preview, for as long as a preview is running, so PlaySound
+        /// steps do nothing. Static because preview is a single, editor-only, one-at-a-time operation;
+        /// there is nothing to scope it to.
         /// </summary>
         public static bool EditorSuppressSound;
+
+        // The edit-mode preview's second capture: where this step's property stood when the most
+        // recent preview Play started, as opposed to the baseline, which is where it rests. It is
+        // what lets Play carry on from where the last preview left things and still start the same
+        // animation over from the same place. Same shape as the baseline, and captured by the same
+        // switch, so no step type can be covered by one and missed by the other.
+        [NonSerialized] private bool hasSnapshot;
+        [NonSerialized] private UnityEngine.Object snapshotTarget;
+        [NonSerialized] private UIAnimationStepType snapshotType;
+        [NonSerialized] private Vector3 snapshotVector;
+        [NonSerialized] private float snapshotFloat;
+        [NonSerialized] private Color snapshotColor;
+        [NonSerialized] private bool snapshotActive;
     #endif
 
         // Built on first use and reconfigured per build, so replaying a stepped animation does
@@ -384,7 +406,10 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         public void Resolve(GameObject owner)
         {
-            GameObject host = ResolveHost(owner);
+            // A filled slot wins outright and the path is never looked up. It is ignored, so it must
+            // not be able to warn about - let alone skip - a step that has a perfectly good target.
+            targetPathMissed = false;
+            GameObject host = DirectTarget() != null ? null : ResolveHost(owner);
 
             switch (TargetKindOf(Type))
             {
@@ -440,19 +465,36 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         private GameObject ResolveHost(GameObject owner)
         {
-            targetPathMissed = false;
-
             GameObject host = FindHost(owner, TargetPath);
             if (host != null) return host;
 
             targetPathMissed = true;
 
+            // A sound's slot is optional by design, so a miss there falls back rather than skipping.
+            string consequence = TargetKindOf(Type) == UIAnimationTargetKind.Audio
+                ? "The sound will play on the shared UI source instead."
+                : "The step will be skipped.";
+
             Debug.LogWarning(
                 "UIAnimationPlayer on '" + owner.name + "': a " + Type + " step has Target Path '" +
-                TargetPath + "', which matches no child of '" + owner.name + "'. The step will be skipped.",
+                TargetPath + "', which matches nothing from '" + owner.name + "'. " + consequence,
                 owner);
 
             return null;
+        }
+
+        /// <summary>The step's own target slot for its current Type - the one the Inspector shows.</summary>
+        private UnityEngine.Object DirectTarget()
+        {
+            switch (TargetKindOf(Type))
+            {
+                case UIAnimationTargetKind.CanvasGroup: return CanvasGroupTarget;
+                case UIAnimationTargetKind.Graphic: return GraphicTarget;
+                case UIAnimationTargetKind.Material: return MaterialTarget;
+                case UIAnimationTargetKind.GameObject: return ActiveTarget;
+                case UIAnimationTargetKind.Audio: return AudioSourceTarget;
+                default: return RectTarget;
+            }
         }
 
         /// <summary>
@@ -513,9 +555,16 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         public void CaptureBaseline()
         {
+            baselineType = Type;
+
             switch (Type)
             {
+                // Punch and shake never read their baseline - they are relative to wherever they
+                // start - but capturing it is what lets the edit-mode preview put back one that was
+                // stopped half way through an oscillation.
                 case UIAnimationStepType.AnchoredPosition:
+                case UIAnimationStepType.PunchAnchoredPosition:
+                case UIAnimationStepType.ShakeAnchoredPosition:
                     if (rect != null) baselineVector = rect.anchoredPosition;
                     break;
 
@@ -524,6 +573,7 @@ namespace rmf_claude.DOTweenUI
                     break;
 
                 case UIAnimationStepType.Scale:
+                case UIAnimationStepType.PunchScale:
                     if (rect != null) baselineVector = rect.localScale;
                     break;
 
@@ -581,14 +631,19 @@ namespace rmf_claude.DOTweenUI
         /// blanket EditorJsonUtility round-trip of the component: that would also rewrite object
         /// reference fields (an Image's sprite and material) and blank them.
         ///
-        /// Steps with nothing to restore - PlaySound, and punch/shake, which already end where
-        /// they began - do nothing here.
+        /// Switches on the Type the baseline was captured under rather than the current one, so a
+        /// Type changed in the Inspector mid-preview puts back the property that was really read
+        /// instead of writing a scale into a position. PlaySound has nothing to restore.
         /// </summary>
         public void RestoreBaseline()
         {
-            switch (Type)
+            switch (baselineType)
             {
+                // Punch and shake end where they began when they run to the end, but not when a
+                // preview is stopped half way through one.
                 case UIAnimationStepType.AnchoredPosition:
+                case UIAnimationStepType.PunchAnchoredPosition:
+                case UIAnimationStepType.ShakeAnchoredPosition:
                     if (rect != null) rect.anchoredPosition = baselineVector;
                     break;
 
@@ -597,6 +652,7 @@ namespace rmf_claude.DOTweenUI
                     break;
 
                 case UIAnimationStepType.Scale:
+                case UIAnimationStepType.PunchScale:
                     if (rect != null) rect.localScale = baselineVector;
                     break;
 
@@ -641,14 +697,78 @@ namespace rmf_claude.DOTweenUI
                     if (HasMaterial()) materialInstance.Material.SetColor(shaderPropertyId, baselineColor);
                     break;
 
-                // Punch and shake move a RectTransform and are excluded on purpose: they return to
-                // their own start value, and the property they drive is already covered by whichever
-                // ordinary step authored it.
                 case UIAnimationStepType.SetActive:
                     if (activeObject != null) activeObject.SetActive(baselineActive);
                     break;
             }
         }
+
+    #if UNITY_EDITOR
+        /// <summary>
+        /// Records where this step's property stands right now, for the edit-mode preview. Reuses
+        /// CaptureBaseline's own switch with the baseline swapped out of the way for the duration.
+        /// </summary>
+        public void EditorCaptureSnapshot()
+        {
+            SwapSnapshot();
+            CaptureBaseline();
+            SwapSnapshot();
+
+            snapshotTarget = ResolvedObject(snapshotType);
+            hasSnapshot = true;
+        }
+
+        /// <summary>
+        /// Writes back what EditorCaptureSnapshot recorded. Skipped when the step now resolves to a
+        /// different object than it did then - a target changed in the Inspector mid-preview - so
+        /// one object's value is never written onto another.
+        /// </summary>
+        public void EditorRestoreSnapshot()
+        {
+            if (!hasSnapshot || ResolvedObject(snapshotType) != snapshotTarget) return;
+
+            SwapSnapshot();
+            RestoreBaseline();
+            SwapSnapshot();
+        }
+
+        private void SwapSnapshot()
+        {
+            Vector3 vector = baselineVector;
+            baselineVector = snapshotVector;
+            snapshotVector = vector;
+
+            float single = baselineFloat;
+            baselineFloat = snapshotFloat;
+            snapshotFloat = single;
+
+            Color color = baselineColor;
+            baselineColor = snapshotColor;
+            snapshotColor = color;
+
+            bool active = baselineActive;
+            baselineActive = snapshotActive;
+            snapshotActive = active;
+
+            UIAnimationStepType type = baselineType;
+            baselineType = snapshotType;
+            snapshotType = type;
+        }
+
+        /// <summary>The resolved object a step of this type writes to, including a material's owner.</summary>
+        private UnityEngine.Object ResolvedObject(UIAnimationStepType type)
+        {
+            switch (TargetKindOf(type))
+            {
+                case UIAnimationTargetKind.CanvasGroup: return canvasGroup;
+                case UIAnimationTargetKind.Graphic: return graphic;
+                case UIAnimationTargetKind.Material: return materialInstance;
+                case UIAnimationTargetKind.GameObject: return activeObject;
+                case UIAnimationTargetKind.Audio: return audioSource;
+                default: return rect;
+            }
+        }
+    #endif
 
         /// <summary>
         /// The Unity object this step writes to, or null for steps that write to none.

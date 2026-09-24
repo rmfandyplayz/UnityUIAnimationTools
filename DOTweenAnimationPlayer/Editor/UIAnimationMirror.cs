@@ -249,7 +249,7 @@ namespace rmf_claude.DOTweenUI
 
             text.Append("Mirrored animation '").Append(animation.Name).Append("'. ");
             text.Append(needsReview.Count == 1 ? "1 step had" : needsReview.Count + " steps had");
-            text.Append(" Use From switched off, so there was no authored start to mirror onto. ");
+            text.Append(" no From (their FROM / TO button read TO), so there was no authored start to mirror onto. ");
             text.Append("Their To is now the resting value, which is the part worth checking: ");
 
             for (int i = 0; i < needsReview.Count; i++)

@@ -45,79 +45,51 @@ namespace rmf_claude.DOTweenUI
 
             var player = (UIAnimationPlayer)target;
 
+            NoteShadowedNames(player);
+
             EditorGUILayout.Space();
 
-            if (Application.isPlaying) DrawPlayModePreview(player);
-            else DrawEditModePreview(player);
-        }
+            if (Application.isPlaying)
+            {
+                EditorGUILayout.LabelField("Preview", EditorStyles.boldLabel);
+            }
+            else
+            {
+                EditorGUILayout.LabelField("Preview (edit mode)", EditorStyles.boldLabel);
 
-        private void DrawPlayModePreview(UIAnimationPlayer player)
-        {
-            EditorGUILayout.LabelField("Preview", EditorStyles.boldLabel);
+                EditorGUILayout.HelpBox(
+                    "Edit-mode preview animates the real objects in your scene.\n\n" + UIAnimationPreview.EditModeNote,
+                    UIAnimationPreview.IsPreviewing(player) ? MessageType.Warning : MessageType.Info);
+            }
 
             CollectNames(player);
 
             for (int i = 0; i < names.Count; i++)
             {
-                string animationName = names[i];
-
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(animationName, GUILayout.MinWidth(60f));
-
-                if (GUILayout.Button("Play", GUILayout.Width(44f))) player.Play(animationName);
-                if (GUILayout.Button("Start", GUILayout.Width(44f))) player.ApplyFromState(animationName);
-                if (GUILayout.Button("Stop", GUILayout.Width(44f))) player.Stop(animationName);
-
-                EditorGUILayout.EndHorizontal();
+                UIAnimationPreview.DrawRow(this, player, names[i]);
             }
 
-            if (GUILayout.Button("Stop All")) player.StopAll();
+            UIAnimationPreview.DrawFooter(player);
 
-            Repaint();
+            if (Application.isPlaying || UIAnimationPreview.IsPreviewing(player)) Repaint();
         }
 
-        private void DrawEditModePreview(UIAnimationPlayer player)
+        /// <summary>
+        /// The player-side half of the shadowing warning the asset inspector gives. Local winning is
+        /// the override feature working, so this is information rather than a warning - but it is the
+        /// only place a player's own inspector says that the shared version of a name never plays here.
+        /// </summary>
+        private static void NoteShadowedNames(UIAnimationPlayer player)
         {
-            EditorGUILayout.LabelField("Preview (edit mode)", EditorStyles.boldLabel);
+            if (player.EditorShared == null) return;
 
-            bool active = UIAnimationPreview.IsPreviewing(player);
+            string list = UIAnimationAssetEditor.ShadowedNames(player.EditorShared, player);
+            if (list == null) return;
 
             EditorGUILayout.HelpBox(
-                "Edit-mode preview animates the real objects in your scene.\n\n" +
-                "Values are put back when the preview stops, and the whole thing is one Undo step " +
-                "(Ctrl+Z) if it goes wrong. Stop it before you save.\n\n" +
-                "Sound steps are skipped, and On Complete events do not fire, so nothing in the " +
-                "animation can run game code while you are not in play mode.",
-                active ? MessageType.Warning : MessageType.Info);
-
-            CollectNames(player);
-
-            for (int i = 0; i < names.Count; i++)
-            {
-                string animationName = names[i];
-
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(animationName, GUILayout.MinWidth(60f));
-
-                if (GUILayout.Button("Play", GUILayout.Width(44f)))
-                {
-                    UIAnimationPreview.Play(this, player, animationName, false);
-                }
-
-                if (GUILayout.Button("Start", GUILayout.Width(44f)))
-                {
-                    UIAnimationPreview.Play(this, player, animationName, true);
-                }
-
-                EditorGUILayout.EndHorizontal();
-            }
-
-            using (new EditorGUI.DisabledScope(!active))
-            {
-                if (GUILayout.Button("Stop and Restore")) UIAnimationPreview.End();
-            }
-
-            if (active) Repaint();
+                "Local animations override the ones of the same name in '" + player.EditorShared.name +
+                "': " + list + ". Only the local versions play on this player.",
+                MessageType.Info);
         }
 
         private static void CollectNames(UIAnimationPlayer player)

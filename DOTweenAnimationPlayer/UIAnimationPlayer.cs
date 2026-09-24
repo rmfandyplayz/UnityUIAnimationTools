@@ -253,7 +253,7 @@ namespace rmf_claude.DOTweenUI
             // in play mode, OnKill fires synchronously for tween.Kill(), DOTween.KillAll() and
             // DOTween.Clear() alike, so this covers all of them; Kill() below sets the reason
             // before killing, and the fire-once flag makes whichever of the two arrives second a
-            // no-op. Out of play mode DOTween's update loop never runs and a kill never despawns,
+            // no-op. Out of play mode DOTween is never initialised and Tween.Kill() returns early,
             // so this never fires there - which is fine, because the preview strips callbacks and
             // passes no onEnd anyway.
             sequence.OnKill(() => fire(captured.PendingEndReason));
@@ -571,8 +571,8 @@ namespace rmf_claude.DOTweenUI
 
             // In play mode the sequence has already resolved this itself - through OnComplete for
             // complete = true, through OnKill otherwise - and the delegate's fire-once flag makes
-            // this a no-op. It does the work out of play mode, where DOTween runs no update loop
-            // and a kill never despawns, and for any sequence whose callbacks were stripped.
+            // this a no-op. It does the work out of play mode, where DOTween is never initialised
+            // and a kill does nothing, and for any sequence whose callbacks were stripped.
             armed.Invoke(complete ? UIAnimationEndReason.Completed : reason);
         }
 
@@ -645,6 +645,69 @@ namespace rmf_claude.DOTweenUI
         {
             initialized = false;
             Initialize();
+            EditorCaptureSnapshots(runtime);
+        }
+
+        /// <summary>
+        /// Readies a second Play within one running preview, without losing the resting values the
+        /// preview will restore at the end. Editor-only, for the inspector preview.
+        ///
+        /// Two things have to be true at once, and they pull in opposite directions. Play must pick up
+        /// whatever was edited in the Inspector since the last one, which means re-resolving and
+        /// re-capturing baselines - and baselines must be the RESTING values, or a Baseline endpoint
+        /// would be measured from wherever the last preview stopped. Yet the new animation has to
+        /// start from where things are now, exactly as it would in play mode.
+        ///
+        /// So: note the current state, go back to rest, re-initialise there, then put the current
+        /// state back. The notes are kept on the previous runtime list's steps, which still point at
+        /// the objects they were resolved against even if re-initialising replaced them.
+        ///
+        /// startOver puts back the state the previous Play started from first, which is how pressing
+        /// Play twice on one animation runs it again from the same place rather than from its end.
+        /// </summary>
+        public void EditorContinuePreview(bool startOver)
+        {
+            previousRuntime.Clear();
+            previousRuntime.AddRange(runtime);
+
+            if (startOver) EditorRestoreSnapshots(previousRuntime);
+
+            EditorCaptureSnapshots(previousRuntime);
+            EditorRestoreBaselines();
+
+            initialized = false;
+            Initialize();
+
+            EditorRestoreSnapshots(previousRuntime);
+            EditorCaptureSnapshots(runtime);
+
+            previousRuntime.Clear();
+        }
+
+        private readonly List<UIAnimation> previousRuntime = new List<UIAnimation>();
+
+        private static void EditorCaptureSnapshots(List<UIAnimation> animations)
+        {
+            for (int i = 0; i < animations.Count; i++)
+            {
+                List<UIAnimationStep> steps = animations[i].Steps;
+                for (int s = 0; s < steps.Count; s++)
+                {
+                    steps[s].EditorCaptureSnapshot();
+                }
+            }
+        }
+
+        private static void EditorRestoreSnapshots(List<UIAnimation> animations)
+        {
+            for (int i = 0; i < animations.Count; i++)
+            {
+                List<UIAnimationStep> steps = animations[i].Steps;
+                for (int s = 0; s < steps.Count; s++)
+                {
+                    steps[s].EditorRestoreSnapshot();
+                }
+            }
         }
 
         /// <summary>

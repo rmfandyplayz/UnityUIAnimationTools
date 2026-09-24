@@ -23,8 +23,9 @@ namespace rmf_claude.DOTweenUI
     /// rule as previewing from the player's own inspector, because it is literally that code.
     ///
     /// The player has to actually reference this asset, since it plays what its own merge produced
-    /// rather than what any asset happens to contain. When it does not, the buttons are disabled
-    /// and say so. Refusing out loud beats a Play button that silently does nothing.
+    /// rather than what any asset happens to contain. When it does not - or the slot is empty - no
+    /// buttons are drawn and a message says why. Refusing out loud beats a Play button that
+    /// silently does nothing.
     ///
     /// The Preview On slot lives on this Editor and is deliberately NOT a serialized field on the
     /// asset: a scene reference is the one thing an asset cannot keep, which is the whole reason
@@ -101,9 +102,7 @@ namespace rmf_claude.DOTweenUI
             {
                 EditorGUILayout.HelpBox(
                     "Edit-mode preview animates the real objects in '" + previewPlayer.name + "'.\n\n" +
-                    "Values are put back when the preview stops, and the whole thing is one Undo " +
-                    "step (Ctrl+Z) if it goes wrong. Stop it before you save.\n\n" +
-                    "Sound steps are skipped, and On Complete events do not fire.",
+                    UIAnimationPreview.EditModeNote,
                     active ? MessageType.Warning : MessageType.Info);
             }
 
@@ -112,58 +111,36 @@ namespace rmf_claude.DOTweenUI
                 UIAnimation animation = asset.Animations[i];
                 if (animation == null || string.IsNullOrEmpty(animation.Name)) continue;
 
-                DrawRow(previewPlayer, animation.Name);
+                UIAnimationPreview.DrawRow(this, previewPlayer, animation.Name);
             }
 
-            if (Application.isPlaying)
-            {
-                if (GUILayout.Button("Stop All")) previewPlayer.StopAll();
-                Repaint();
-                return;
-            }
+            UIAnimationPreview.DrawFooter(previewPlayer);
 
-            using (new EditorGUI.DisabledScope(!active))
-            {
-                if (GUILayout.Button("Stop and Restore")) UIAnimationPreview.End();
-            }
-
-            if (active) Repaint();
-        }
-
-        private void DrawRow(UIAnimationPlayer player, string animationName)
-        {
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(animationName, GUILayout.MinWidth(60f));
-
-            if (Application.isPlaying)
-            {
-                if (GUILayout.Button("Play", GUILayout.Width(44f))) player.Play(animationName);
-                if (GUILayout.Button("Start", GUILayout.Width(44f))) player.ApplyFromState(animationName);
-                if (GUILayout.Button("Stop", GUILayout.Width(44f))) player.Stop(animationName);
-            }
-            else
-            {
-                if (GUILayout.Button("Play", GUILayout.Width(44f)))
-                {
-                    UIAnimationPreview.Play(this, player, animationName, false);
-                }
-
-                if (GUILayout.Button("Start", GUILayout.Width(44f)))
-                {
-                    UIAnimationPreview.Play(this, player, animationName, true);
-                }
-            }
-
-            EditorGUILayout.EndHorizontal();
+            if (Application.isPlaying || active) Repaint();
         }
 
         /// <summary>
-        /// Names this asset defines that the chosen player also defines locally. The local one wins
-        /// - that is the override feature working as intended - but it does mean pressing Play on
-        /// that row previews the player's version rather than this one, which is worth saying
-        /// before someone spends ten minutes tuning a curve that never plays.
+        /// Warns about names this asset defines that the chosen player also defines locally. The
+        /// local one wins - that is the override feature working as intended - but it does mean
+        /// pressing Play on that row previews the player's version rather than this one, which is
+        /// worth saying before someone spends ten minutes tuning a curve that never plays.
         /// </summary>
         private static void WarnAboutShadowedNames(UIAnimationAsset asset, UIAnimationPlayer player)
+        {
+            string list = ShadowedNames(asset, player);
+            if (list == null) return;
+
+            EditorGUILayout.HelpBox(
+                "'" + player.name + "' overrides " + (shadowed.Count == 1 ? "this animation" : "these animations") +
+                " locally: " + list + ". Previewing on this player plays its version, not the one in this asset.",
+                MessageType.Warning);
+        }
+
+        /// <summary>
+        /// The names both the asset and the player's local list define, comma-separated, or null when
+        /// there are none. Shared with the player's inspector, which says the same thing from its side.
+        /// </summary>
+        public static string ShadowedNames(UIAnimationAsset asset, UIAnimationPlayer player)
         {
             shadowed.Clear();
 
@@ -183,11 +160,9 @@ namespace rmf_claude.DOTweenUI
                 }
             }
 
-            if (shadowed.Count == 0) return;
+            if (shadowed.Count == 0) return null;
 
             var text = new StringBuilder();
-            text.Append("'").Append(player.name).Append("' overrides ");
-            text.Append(shadowed.Count == 1 ? "this animation" : "these animations").Append(" locally: ");
 
             for (int i = 0; i < shadowed.Count; i++)
             {
@@ -195,9 +170,7 @@ namespace rmf_claude.DOTweenUI
                 text.Append(shadowed[i]);
             }
 
-            text.Append(". Previewing on this player plays its version, not the one in this asset.");
-
-            EditorGUILayout.HelpBox(text.ToString(), MessageType.Warning);
+            return text.ToString();
         }
     }
 }

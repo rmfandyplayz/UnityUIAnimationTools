@@ -30,7 +30,8 @@ namespace rmf_claude.DOTweenUI
         private static AudioSource shared;
 
         /// <summary>
-        /// The shared 2D UI source, created on first use. Never null at runtime.
+        /// The shared 2D UI source, created on first use. Never null at runtime; always null out of
+        /// play mode, unless one was handed to SetShared.
         /// </summary>
         public static AudioSource Shared
         {
@@ -39,6 +40,13 @@ namespace rmf_claude.DOTweenUI
                 // A destroyed AudioSource compares equal to null, so this also recovers from
                 // the object being destroyed or from a domain reload wiping the static.
                 if (shared != null) return shared;
+
+            #if UNITY_EDITOR
+                // DontDestroyOnLoad throws out of play mode, AFTER the GameObject exists and before
+                // the static is set - so every call would leave another "UI Animation Audio" in the
+                // open scene, outside any Undo record, to be saved with it.
+                if (!Application.isPlaying) return null;
+            #endif
 
                 var host = new GameObject("UI Animation Audio");
                 Object.DontDestroyOnLoad(host);
