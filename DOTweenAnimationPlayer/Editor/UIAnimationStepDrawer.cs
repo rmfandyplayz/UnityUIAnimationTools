@@ -94,21 +94,62 @@ namespace rmf_claude.DOTweenUI
 
             public Rect Line()
             {
-                Rect r = new Rect(Area.x, Area.y + Used, Area.width, EditorGUIUtility.singleLineHeight);
-                Used += EditorGUIUtility.singleLineHeight + Pad;
+                return Lines(EditorGUIUtility.singleLineHeight);
+            }
+
+            /// <summary>A row of any height, for text that wraps.</summary>
+            public Rect Lines(float height)
+            {
+                Rect r = new Rect(Area.x, Area.y + Used, Area.width, height);
+                Used += height + Pad;
                 return r;
             }
         }
 
+        /// <summary>
+        /// How much narrower than the whole view each step was last drawn, by property path.
+        ///
+        /// GetPropertyHeight is not told the width it will be drawn at, and the warning row wraps, so
+        /// its height depends on that width. EditorGUIUtility.currentViewWidth IS live there, though,
+        /// and everything between the view's edge and a step - the Inspector's margins, the lists'
+        /// drag handles and padding - is a fixed number of points. So the measuring pass lays out at
+        /// the view width minus the margin seen on the last draw, and matches the draw to the point,
+        /// including while the window is resized. The first measure of a new view guesses; the list
+        /// re-measures on its first repaint (a changed list rect invalidates its height cache), by
+        /// which time a draw has recorded the real margin.
+        /// </summary>
+        private static readonly Dictionary<string, float> viewMargins = new Dictionary<string, float>();
+
+        private const float GuessedViewMargin = 90f;
+
         public override float GetPropertyHeight(SerializedProperty property, GUIContent label)
         {
-            Layout layout = new Layout { Area = new Rect(0f, 0f, 100f, 0f), Draw = false };
+            float margin;
+            if (!viewMargins.TryGetValue(property.propertyPath, out margin)) margin = GuessedViewMargin;
+
+            float width = Mathf.Max(100f, EditorGUIUtility.currentViewWidth - margin);
+
+            Layout layout = new Layout { Area = new Rect(0f, 0f, width, 0f), Draw = false };
             Render(ref layout, property);
             return layout.Used;
         }
 
         public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)
         {
+            // Layout events hand over a dummy rect; only a real one says how wide the step is. A margin
+            // that changed means this pass was measured against a stale one, so draw again.
+            if (Event.current.type != EventType.Layout)
+            {
+                float margin = EditorGUIUtility.currentViewWidth - position.width;
+                float known;
+
+                if (!viewMargins.TryGetValue(property.propertyPath, out known) || !Mathf.Approximately(known, margin))
+                {
+                    viewMargins[property.propertyPath] = margin;
+                    HandleUtility.Repaint();
+                }
+            }
+
             DrawBand(position, property);
 
             EditorGUI.BeginProperty(position, label, property);
@@ -601,27 +642,28 @@ namespace rmf_claude.DOTweenUI
         }
 
         /// <summary>
-        /// One warning row under the target, for a step that will do nothing as authored - the Type
-        /// asks for a component the target does not have, a Target Path finds nothing, and so on. One
-        /// line rather than a help box, because GetPropertyHeight is not told the width it would wrap
-        /// to; the full text is the tooltip.
+        /// The warning row under the target, for a step that will do nothing as authored - the Type
+        /// asks for a component the target does not have, a Target Path finds nothing, and so on. It
+        /// wraps onto as many lines as the text needs, measured at the width the step will be drawn
+        /// at (see viewMargins), so nothing is cut off.
         /// </summary>
         private static void DrawProblem(ref Layout layout, string problem)
         {
-            Rect r = layout.Line();
-            if (!layout.Draw) return;
-
             if (problemStyle == null)
             {
-                problemStyle = new GUIStyle(EditorStyles.label) { clipping = TextClipping.Clip, wordWrap = false };
+                problemStyle = new GUIStyle(EditorStyles.label) { wordWrap = true };
             }
+
+            var text = new GUIContent(problem);
+            float textWidth = Mathf.Max(1f, layout.Area.width - IconWidth - 2f);
+            Rect r = layout.Lines(Mathf.Max(EditorGUIUtility.singleLineHeight, problemStyle.CalcHeight(text, textWidth)));
+            if (!layout.Draw) return;
 
             EditorGUI.DrawRect(r, ProblemTint);
 
-            // The icon gets a rect of its own: a label drops its image once the text overflows.
-            GUI.Label(new Rect(r.x + 2f, r.y + 1f, 16f, 16f), new GUIContent(WarningIcon, problem), GUIStyle.none);
-            EditorGUI.LabelField(new Rect(r.x + IconWidth + 2f, r.y, Mathf.Max(0f, r.width - IconWidth - 2f), r.height),
-                new GUIContent(problem, problem), problemStyle);
+            // The icon gets a rect of its own, level with the first line.
+            GUI.Label(new Rect(r.x + 2f, r.y + 1f, 16f, 16f), WarningIcon, GUIStyle.none);
+            GUI.Label(new Rect(r.x + IconWidth + 2f, r.y, textWidth, r.height), text, problemStyle);
         }
 
         private void DrawImpulseFields(ref Layout layout, SerializedProperty property, UIAnimationStepType stepType)
