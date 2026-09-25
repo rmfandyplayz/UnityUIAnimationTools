@@ -46,12 +46,15 @@ namespace rmf_claude.DOTweenUI
                  "that move by an amount, and does nothing useful on one that fades to a fixed 1.")]
         public LoopType LoopType = LoopType.Restart;
 
+        // Drawn with FPS beside it on the same row, shown while this is ticked.
+        [UIAnimationInlineValue("FPS")]
         [Tooltip("Play in discrete frames instead of smoothly, for a stop-motion or flipbook look. " +
                  "Every step still starts and lands on exactly the same values - only the movement " +
-                 "in between is stepped.")]
+                 "in between is stepped. Tick it and type the frame rate in the box beside it.")]
         public bool PlayAtCustomFPS;
 
-        [UIAnimationShowIf("PlayAtCustomFPS")]
+        // Shown beside Play At Custom FPS rather than as a row of its own.
+        [HideInInspector]
         [Tooltip("Frames per second to step at. 12 is the classic hand-drawn look, 24 is film, " +
                  "6 to 8 is very chunky. Setting it above the display refresh rate does nothing.\n" +
                  "Every step shares one frame grid, so staggered steps tick together.\n" +

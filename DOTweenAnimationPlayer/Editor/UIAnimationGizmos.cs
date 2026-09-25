@@ -62,6 +62,17 @@ namespace rmf_claude.DOTweenUI
             set { EditorPrefs.SetInt(Prefix + "Palette", (int)value); }
         }
 
+        /// <summary>
+        /// The palette actually drawn with. Rainbow is only honoured in Expanded Steps: it is there to
+        /// read the handful of steps being worked on in timeline order, and spread over whole animations
+        /// it is just an arbitrary gradient, where distinct colours tell drawings apart far better. The
+        /// stored choice is kept, so switching back to Expanded Steps brings Rainbow back.
+        /// </summary>
+        public static Palette EffectiveColors
+        {
+            get { return Mode == ShowMode.ExpandedSteps ? Colors : Palette.Distinct; }
+        }
+
         public static int Seed
         {
             get { return EditorPrefs.GetInt(Prefix + "Seed", 0); }
@@ -115,10 +126,21 @@ namespace rmf_claude.DOTweenUI
                     "Expanded Steps = only the steps open in the Inspector, inside open animations."),
                     (int)Mode, ShowNames);
 
-                var palette = (Palette)EditorGUILayout.Popup(new GUIContent("Colors",
-                    "Distinct = a different colour per drawing, spread as far apart as possible.\n" +
-                    "Rainbow = red for the first drawing through to purple for the last, in timeline order."),
-                    (int)Colors, PaletteNames);
+                // Rainbow only applies to Expanded Steps - see EffectiveColors. Anywhere else the row is
+                // greyed out on Distinct, and what was chosen is left stored for when it applies again.
+                bool rainbowApplies = mode == ShowMode.ExpandedSteps;
+                Palette palette = Colors;
+
+                using (new EditorGUI.DisabledScope(!rainbowApplies))
+                {
+                    var chosen = (Palette)EditorGUILayout.Popup(new GUIContent("Colors",
+                        "Distinct = a different colour per drawing, spread as far apart as possible.\n" +
+                        "Rainbow = red for the first drawing through to purple for the last, in timeline order. " +
+                        "Expanded Steps only - across whole animations Distinct is always used."),
+                        rainbowApplies ? (int)Colors : (int)Palette.Distinct, PaletteNames);
+
+                    if (rainbowApplies) palette = chosen;
+                }
 
                 int outlines = EditorGUILayout.IntSlider(new GUIContent("Outlines",
                     "How many outlines a size, offset or scale step is drawn with, from its first moment to " +
@@ -133,7 +155,7 @@ namespace rmf_claude.DOTweenUI
                     SceneView.RepaintAll();
                 }
 
-                using (new EditorGUI.DisabledScope(Colors != Palette.Distinct))
+                using (new EditorGUI.DisabledScope(EffectiveColors != Palette.Distinct))
                 {
                     if (GUILayout.Button(new GUIContent("Shuffle Colors", "Picks a new set of distinct colours.")))
                     {
@@ -302,7 +324,7 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         private static Color ColorOf(int index, int count)
         {
-            if (Colors == Palette.Rainbow)
+            if (EffectiveColors == Palette.Rainbow)
             {
                 float hue = count > 1 ? 0.8f * index / (count - 1) : 0f;
                 return Color.HSVToRGB(hue, 0.85f, 1f);

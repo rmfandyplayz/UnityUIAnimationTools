@@ -54,6 +54,37 @@ namespace rmf_claude.DOTweenUI
             }
         }
 
+        private static GUIStyle dimFoldout;
+
+        /// <summary>
+        /// The bold header with its text faded, for a step that will do nothing as authored - so a
+        /// collapsed list shows which rows are dead before anything is opened. Only the text fades;
+        /// the arrow is a background image, and the warning icon beside it stays at full strength.
+        /// </summary>
+        private static GUIStyle DimFoldout
+        {
+            get
+            {
+                if (dimFoldout == null)
+                {
+                    dimFoldout = new GUIStyle(BoldFoldout);
+
+                    foreach (GUIStyleState state in new[]
+                             {
+                                 dimFoldout.normal, dimFoldout.onNormal, dimFoldout.hover, dimFoldout.onHover,
+                                 dimFoldout.focused, dimFoldout.onFocused, dimFoldout.active, dimFoldout.onActive,
+                             })
+                    {
+                        Color color = state.textColor;
+                        color.a *= 0.45f;
+                        state.textColor = color;
+                    }
+                }
+
+                return dimFoldout;
+            }
+        }
+
         /// <summary>Tracks vertical layout. Run once to measure, once to draw.</summary>
         private struct Layout
         {
@@ -89,8 +120,8 @@ namespace rmf_claude.DOTweenUI
         }
 
         // Faint enough to leave the list's own selection highlight readable through it.
-        private static readonly Color BandDark = new Color(1f, 1f, 1f, 0.04f);
-        private static readonly Color BandLight = new Color(0f, 0f, 0f, 0.05f);
+        private static readonly Color BandDark = new Color(1f, 1f, 1f, 0.06f);
+        private static readonly Color BandLight = new Color(0f, 0f, 0f, 0.06f);
 
         /// <summary>
         /// Shades every other step, like spreadsheet rows, so where one expanded step ends and the
@@ -109,20 +140,20 @@ namespace rmf_claude.DOTweenUI
             if (index % 2 == 0) return;
 
             EditorGUI.DrawRect(
-                new Rect(position.x - BandLeft, position.y - BandTop,
-                    position.width + BandLeft + BandRight, position.height + BandTop + BandBottom),
+                new Rect(position.x - BandLeft, position.y - BandTop, position.width + BandLeft + BandRight, position.height),
                 EditorGUIUtility.isProSkin ? BandDark : BandLight);
         }
 
-        // How far the band reaches past the rect the list hands this drawer, so it fills the whole
-        // row the way the list's own selection highlight does. Measured against that highlight in
-        // Unity 6000.3: the list keeps its drag handle (20) and a foldout margin (8) to the left of
-        // the rect and its padding (6) to the right. Top and bottom split the small gap the list
-        // leaves between rows, so a shaded row meets the plain rows either side of it.
+        // How far the band reaches past the rect the list hands this drawer, so it fills exactly the
+        // row the list's own selection highlight does. From ReorderableList's source (Unity 6000.3):
+        // the list keeps its drag handle (20) and a foldout margin (8) to the left of the rect and its
+        // padding (6) to the right, and it hands over the row's FULL height - the step's own height
+        // plus its 2-point element padding - moved down by half that padding. So the band starts 1
+        // point above the rect and is exactly as tall as it; any taller runs into the next row, which
+        // an earlier guess of 2 above and 4 below visibly did.
         private const float BandLeft = 28f;
         private const float BandRight = 6f;
-        private const float BandTop = 2f;
-        private const float BandBottom = 4f;
+        private const float BandTop = 1f;
 
         private void Render(ref Layout layout, SerializedProperty property)
         {
@@ -140,13 +171,19 @@ namespace rmf_claude.DOTweenUI
                 ? UIAnimationTargets.ProblemOf(property, stepType, UIAnimationTargets.OwnerOf(property.serializedObject))
                 : null;
 
+            // A step that will do nothing. Every problem is one, except a sound whose Target Path
+            // misses - that still plays, on the shared source, so it is warned about but left alone.
+            bool inert = problem != null
+                && (stepType != UIAnimationStepType.PlaySound || property.FindPropertyRelative("Clip").objectReferenceValue == null);
+
             Rect header = layout.Line();
             if (layout.Draw)
             {
                 float width = EditorGUI.IndentedRect(header).width - (problem != null ? IconWidth : 0f);
                 GUIContent summary = FittedSummary(property, stepType, startMode, width);
 
-                property.isExpanded = EditorGUI.Foldout(header, property.isExpanded, summary, true, BoldFoldout);
+                property.isExpanded = EditorGUI.Foldout(header, property.isExpanded, summary, true,
+                    inert ? DimFoldout : BoldFoldout);
 
                 // A collapsed step still says something is wrong with it: a warning icon at the end of
                 // the row, where it lines up down the list. Drawn separately because the foldout style
@@ -165,28 +202,41 @@ namespace rmf_claude.DOTweenUI
             Rect typeRow = layout.Line();
             if (layout.Draw) DrawTypePopup(typeRow, type);
 
-            Field(ref layout, start);
+            Rect startRow = layout.Line();
+            if (layout.Draw) DrawStartButton(startRow, start);
 
             DrawTarget(ref layout, property, stepType);
 
             if (problem != null) DrawProblem(ref layout, problem);
 
-            bool impulse = UIAnimationStep.IsImpulse(stepType);
-
+            // Everything that only matters once the step can reach what it drives is greyed out while
+            // it cannot, so a dead step reads as dead rather than as a normal one with a warning on it.
+            // What fixes it stays live: Type, Start, the target and Target Path above, and the Clip or
+            // Shader Property below, which are drawn before the greyed part starts. DisabledScopes
+            // nest by AND-ing, so nothing inside one could be switched back on.
             if (stepType == UIAnimationStepType.SetActive)
             {
-                Field(ref layout, property.FindPropertyRelative("ActiveValue"), "Set Active To");
-                Field(ref layout, property.FindPropertyRelative("Delay"));
+                using (new EditorGUI.DisabledScope(inert))
+                {
+                    Field(ref layout, property.FindPropertyRelative("ActiveValue"), "Set Active To");
+                    Field(ref layout, property.FindPropertyRelative("Delay"));
+                }
+
                 return;
             }
 
             if (stepType == UIAnimationStepType.PlaySound)
             {
                 Field(ref layout, property.FindPropertyRelative("Clip"));
-                Field(ref layout, property.FindPropertyRelative("Volume"));
-                Field(ref layout, property.FindPropertyRelative("Pitch"));
-                Field(ref layout, property.FindPropertyRelative("PitchVariation"), "Pitch Variation");
-                Field(ref layout, property.FindPropertyRelative("Delay"));
+
+                using (new EditorGUI.DisabledScope(inert))
+                {
+                    Field(ref layout, property.FindPropertyRelative("Volume"));
+                    Field(ref layout, property.FindPropertyRelative("Pitch"));
+                    Field(ref layout, property.FindPropertyRelative("PitchVariation"), "Pitch Variation");
+                    Field(ref layout, property.FindPropertyRelative("Delay"));
+                }
+
                 return;
             }
 
@@ -194,6 +244,17 @@ namespace rmf_claude.DOTweenUI
             {
                 Field(ref layout, property.FindPropertyRelative("ShaderProperty"));
             }
+
+            using (new EditorGUI.DisabledScope(inert))
+            {
+                RenderTween(ref layout, property, stepType);
+            }
+        }
+
+        /// <summary>Timing, ease, endpoints and the rest - everything a tweening step has below its target.</summary>
+        private void RenderTween(ref Layout layout, SerializedProperty property, UIAnimationStepType stepType)
+        {
+            bool impulse = UIAnimationStep.IsImpulse(stepType);
 
             Field(ref layout, property.FindPropertyRelative("Duration"));
             Field(ref layout, property.FindPropertyRelative("Delay"));
@@ -679,12 +740,13 @@ namespace rmf_claude.DOTweenUI
         private const string UseTooltip =
             "Use Current Value: copies what the target holds right now into this field.\n\n" +
             "To pose it: press Reset (or Play) above, then move, resize or recolour the object and click " +
-            "this. Stop and Restore puts the object back afterwards, and the value you copied stays.";
+            "this. Selecting the object to pose it keeps the preview running - come back here to click. " +
+            "Stop and Restore puts the object back afterwards, and the value you copied stays.";
 
         private const string NeedsPreview =
             "\n\nOutside a preview, wherever the object sits IS its resting value, so this would always " +
-            "store 0. Press Reset (or Play) above first, change the object, then click. Stop and Restore " +
-            "puts it back.";
+            "store 0. Press Reset (or Play) above first, change the object - selecting it to do that keeps " +
+            "the preview running - then come back and click. Stop and Restore puts it back.";
 
         /// <summary>
         /// The record button at the end of a From or To row. It reads the step's target and writes what it
@@ -1043,6 +1105,43 @@ namespace rmf_claude.DOTweenUI
 
             EditorGUI.EndProperty();
         }
+
+        private static float startWidth;
+
+        /// <summary>
+        /// The Start row: one button that switches between AFTER PREVIOUS and WITH PREVIOUS, in the
+        /// style of the FROM / TO button - two choices do not need a dropdown. It writes the same enum
+        /// the dropdown did. Anything but AfterPrevious reads as WITH PREVIOUS, because that is how
+        /// playback treats it.
+        /// </summary>
+        private static void DrawStartButton(Rect rect, SerializedProperty start)
+        {
+            if (startWidth <= 0f)
+            {
+                startWidth = Mathf.Max(EditorStyles.miniButton.CalcSize(new GUIContent(StartAfter)).x,
+                    EditorStyles.miniButton.CalcSize(new GUIContent(StartWith)).x) + 8f;
+            }
+
+            string tooltip = start.tooltip + "\n\nClick to switch.";
+
+            GUIContent label = EditorGUI.BeginProperty(rect, new GUIContent("Start", tooltip), start);
+            Rect field = EditorGUI.PrefixLabel(rect, label);
+            field.width = Mathf.Min(field.width, startWidth);
+
+            bool mixed = start.hasMultipleDifferentValues;
+            bool with = start.intValue != (int)UIAnimationStartMode.AfterPrevious;
+
+            if (GUI.Button(field, new GUIContent(mixed ? MixedValue : with ? StartWith : StartAfter, tooltip),
+                    EditorStyles.miniButton))
+            {
+                start.intValue = (int)(mixed || with ? UIAnimationStartMode.AfterPrevious : UIAnimationStartMode.WithPrevious);
+            }
+
+            EditorGUI.EndProperty();
+        }
+
+        private const string StartAfter = "AFTER PREVIOUS";
+        private const string StartWith = "WITH PREVIOUS";
 
         private static string ValueFieldName(string label, UIAnimationValueKind kind)
         {

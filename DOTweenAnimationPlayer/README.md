@@ -136,7 +136,7 @@ An animation whose steps use only empty slots and paths is **portable**: it work
 
 ### Type check
 
-The Inspector checks every step against what it will actually drive, so a broken step shows up while you author it instead of as a Console warning after `Play`. A step that will do nothing gets a ⚠ at the end of its header and a warning row under its target:
+The Inspector checks every step against what it will actually drive, so a broken step shows up while you author it instead of as a Console warning after `Play`. A step that will do nothing gets a ⚠ at the end of its header, its header text fades, and a warning row appears under its target:
 
 | Warning | Meaning |
 |---|---|
@@ -145,16 +145,18 @@ The Inspector checks every step against what it will actually drive, so a broken
 | `Shader 'UI/Default' has no property '_Nope'` | A material step's Shader Property isn't on that material |
 | `No Clip` | A Play Sound step with nothing to play |
 
+Everything under the warning is **greyed out** until the step is fixed — Duration, Ease, From / To and the rest only matter once the step can reach what it drives. What fixes it stays editable: Type, Start, the target slot and Target Path above the warning, and a sound step's Clip or a material step's Shader Property below it. The one warning that greys nothing is a sound whose Target Path misses, because that still plays, on the shared audio source.
+
 It follows playback's own rules exactly — the slot, then the Target Path, then the player's own object — so it checks the object at the end of a Target Path too, `..` included. In a shared set there's no scene to check against until you set **Preview On**; until then only the clip and shader-name checks run. Hover a warning row for the full text.
 
 ---
 
 ## Sequential vs parallel
 
-Every step has a **Start** field:
+Every step has a **Start** button — click it to switch between the two:
 
-- `AfterPrevious` → `Sequence.Append` — runs after everything before it.
-- `WithPrevious` → `Sequence.Join` — runs alongside the previous step.
+- `AFTER PREVIOUS` (`AfterPrevious`) → `Sequence.Append` — runs after everything before it.
+- `WITH PREVIOUS` (`WithPrevious`) → `Sequence.Join` — runs alongside the previous step.
 
 Per-step **Delay** works with both. Read the step list top to bottom and that's your timeline.
 
@@ -179,14 +181,15 @@ Neither is changed by the [mirror commands](#mirroring-an-animation) — a mirro
 
 ## Frame rate
 
-By default an animation moves smoothly, changing a little every rendered frame. Tick **Play At Custom FPS** on an animation and an **FPS** box appears below it — from then on that animation advances in discrete steps, for a stop-motion or flipbook look.
+By default an animation moves smoothly, changing a little every rendered frame. Tick **Play At Custom FPS** on an animation and a frame-rate box appears beside the tick — from then on that animation advances in discrete steps, for a stop-motion or flipbook look.
 
 ```
 Loops                      1
 Loop Type                  Restart
-Play At Custom FPS         ✔
-FPS                        12
+Play At Custom FPS         ✔ [ 12 ]
 ```
+
+In code the box is still the separate `FPS` field.
 
 `12` is the classic hand-drawn look, `24` is film, `6`–`8` is deliberately crunchy. Setting it above your display's refresh rate does nothing, because there's no frame in between to hold on.
 
@@ -261,8 +264,8 @@ What it stores depends on the row's mode, so the step always ends up exactly whe
 **Pose inside a preview.** Out of a preview, wherever the object sits *is* its resting value — so `Baseline` and `Current` would always store 0, and those buttons are greyed out until a preview is running. The workflow is the one Unity's Animation window uses for keys:
 
 1. Press **Reset** (or Play) on the animation.
-2. Drag, resize, recolour or rotate the object.
-3. Click the record button on the row.
+2. Drag, resize, recolour or rotate the object. Selecting it to do that is fine: the preview keeps running while the selection is on the player or one of the objects it animates.
+3. Select the player again and click the record button on the row.
 4. **Stop and Restore** puts the object back. The value you copied stays.
 
 `Absolute` works any time, but outside a preview the object stays wherever you dragged it. Rotation is read as the nearest angle to zero, so a turn to `-10` isn't copied as `350` and spun the long way round.
@@ -325,7 +328,7 @@ A **PlaySound** step fires a clip at its point in the timeline. Put one first in
 ```
 ▼ AFTER  ui_click (Play Sound)
     Type               Play Sound
-    Start              After Previous
+    Start              [AFTER PREVIOUS]
     Audio Source       None            ← see below
     Clip               ui_click
     Volume             1
@@ -458,7 +461,7 @@ If a step arrives with a target anyway — pasting one copied off a player carri
 
 An animation set has nothing of its own to animate, so its inspector borrows a scene player: drop one into **Preview On** and the Play / Reset / Stop buttons run the ordinary player preview, with the same capture, restore, Undo entry and one-at-a-time rule. The player has to actually have the set in its Shared slot — it plays what its own merge produced, not what any asset happens to contain. With the slot empty, or holding a player that doesn't use the set, no buttons are drawn and a message says why.
 
-The Preview On slot is not saved into the asset. It couldn't be: a scene reference is the one thing an asset cannot keep, which is what the whole feature is working around.
+The Preview On slot is not saved into the asset. It couldn't be: a scene reference is the one thing an asset cannot keep, which is what the whole feature is working around. It is remembered per asset until Unity recompiles or restarts, so selecting something else and coming back finds it still set.
 
 ### Things worth knowing
 
@@ -492,7 +495,8 @@ Edit-mode preview animates **real objects in your open scene**, so it takes some
 - The whole preview is **one Undo step** — `Ctrl+Z` is the escape hatch if something looks wrong.
 - `To: Baseline` endpoints are always measured from rest, however many animations you chain, so they never drift.
 - Edits made in the Inspector between two `Play`s are picked up by the second one.
-- Selecting another object, **entering play mode** and a script recompile each end the preview and restore first. Entering play mode matters most: Unity backs the scene up as it stands, so an unrestored preview would come back out of play mode looking authored.
+- Selecting something the preview doesn't animate, **entering play mode** and a script recompile each end the preview and restore first. Entering play mode matters most: Unity backs the scene up as it stands, so an unrestored preview would come back out of play mode looking authored.
+- Selecting **one of the objects the preview animates** — or the player's shared set — keeps it running, so you can select the thing you're posing, drag it, and come back to click [Use Current Value](#use-current-value). The preview ends once the selection moves anywhere else.
 - Previewing a different player ends the current preview first; only one player previews at a time.
 - **`Play Sound` steps are skipped** for the whole preview, and **`On Complete` events do not fire** — an `On Complete` is a UnityEvent wired to arbitrary game code, and a preview has no business running that outside play mode.
 
@@ -514,7 +518,7 @@ The **Scene Gizmos** button under the preview opens the settings:
 | Setting | Options |
 |---|---|
 | Show | `Disabled` · `All Animations` · `Expanded Animations` (the default) · `Expanded Steps` — "expanded" means open in the Inspector, so what you're editing is what you see |
-| Colors | `Distinct` — a different colour per drawing, spread as far apart as possible, with **Shuffle Colors** for a new set · `Rainbow` — red for the first drawing through to purple for the last, in timeline order |
+| Colors | `Distinct` — a different colour per drawing, spread as far apart as possible, with **Shuffle Colors** for a new set · `Rainbow` — red for the first drawing through to purple for the last, in timeline order. Rainbow is for `Expanded Steps` only: in the other modes the row is greyed out and `Distinct` is used, since across whole animations a gradient says nothing a distinct colour doesn't say better. Your choice is kept for when you switch back |
 | Outlines | How many outlines a size step is drawn with, 2 to 12 |
 
 The settings are your own editor preferences — they're never saved into a scene, prefab or asset. A shared set draws on its **Preview On** player. Gizmos are edit-mode only.
@@ -671,7 +675,7 @@ UI Animation Player
         ▼ Steps                    2
             ▼ AFTER  [self] (Canvas Group Alpha)  0.25s  Out Quad
                 Type               Canvas Group Alpha
-                Start              After Previous
+                Start              [AFTER PREVIOUS]
                 Canvas Group       None            ← empty = this GameObject
                 Duration           0.25
                 Delay              0
@@ -681,7 +685,7 @@ UI Animation Player
 
             ▼ with  Scale  0.25s  Out Back
                 Type               Scale
-                Start              With Previous   ← parallel with the fade above
+                Start              [WITH PREVIOUS]   ← parallel with the fade above
                 Rect Transform     None
                 Duration           0.25
                 Delay              0
@@ -721,7 +725,7 @@ UI Animation Player
         ▼ Steps                    1
             ▼ AFTER  [self] (Material Float)  0.8s  In Out Quad
                 Type               Material Float
-                Start              After Previous
+                Start              [AFTER PREVIOUS]
                 Material Inst.     None            ← empty = this GameObject
                 Shader Property    _Progress
                 Duration           0.8

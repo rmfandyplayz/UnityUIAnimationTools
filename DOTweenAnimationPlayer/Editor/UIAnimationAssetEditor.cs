@@ -27,9 +27,11 @@ namespace rmf_claude.DOTweenUI
     /// buttons are drawn and a message says why. Refusing out loud beats a Play button that
     /// silently does nothing.
     ///
-    /// The Preview On slot lives on this Editor and is deliberately NOT a serialized field on the
-    /// asset: a scene reference is the one thing an asset cannot keep, which is the whole reason
-    /// this class exists.
+    /// The Preview On slot is deliberately NOT a serialized field on the asset: a scene reference is
+    /// the one thing an asset cannot keep, which is the whole reason this class exists. It is
+    /// remembered per asset for the rest of the editor session instead, so coming back to the asset -
+    /// after selecting one of the objects it animates to pose it, say - finds it still set, along with
+    /// the preview still running on it.
     /// </summary>
     [CustomEditor(typeof(UIAnimationAsset))]
     internal class UIAnimationAssetEditor : Editor
@@ -38,15 +40,16 @@ namespace rmf_claude.DOTweenUI
 
         private static readonly List<string> shadowed = new List<string>();
 
-        // Which player each open asset inspector is previewing on, so the step drawer can check an
-        // asset's steps against a real scene and the gizmos have somewhere to draw. Keyed by asset
-        // because the drawer only knows the serialized object it is drawing.
+        // Which player each asset was last previewed on, so the step drawer can check an asset's steps
+        // against a real scene, the gizmos have somewhere to draw, and a new inspector on the same
+        // asset starts with the slot filled. Keyed by asset because the drawer only knows the
+        // serialized object it is drawing. Static, so it lasts until the next domain reload.
         private static readonly Dictionary<UIAnimationAsset, UIAnimationPlayer> previewPlayers =
             new Dictionary<UIAnimationAsset, UIAnimationPlayer>();
 
         /// <summary>
-        /// The Preview On player an open inspector has chosen for this asset, when that player really
-        /// uses it. Null otherwise - there is then no scene to resolve the asset's steps against.
+        /// The Preview On player chosen for this asset, when that player really uses it. Null otherwise
+        /// - there is then no scene to resolve the asset's steps against.
         /// </summary>
         public static UIAnimationPlayer PreviewPlayerFor(UIAnimationAsset asset)
         {
@@ -59,18 +62,14 @@ namespace rmf_claude.DOTweenUI
         private void OnEnable()
         {
             SceneView.duringSceneGui += OnSceneView;
+
+            var asset = target as UIAnimationAsset;
+            if (asset != null) previewPlayers.TryGetValue(asset, out previewPlayer);
         }
 
         private void OnDisable()
         {
             SceneView.duringSceneGui -= OnSceneView;
-
-            var asset = target as UIAnimationAsset;
-            UIAnimationPlayer registered;
-            if (asset != null && previewPlayers.TryGetValue(asset, out registered) && registered == previewPlayer)
-            {
-                previewPlayers.Remove(asset);
-            }
 
             UIAnimationPreview.EndIfOwnedBy(this);
         }
@@ -111,7 +110,8 @@ namespace rmf_claude.DOTweenUI
                 new GUIContent("Preview On",
                     "A UI Animation Player in the open scene to preview these animations on. " +
                     "An animation set has no object of its own to animate.\n\n" +
-                    "Not saved into the asset - an asset cannot hold a scene reference."),
+                    "Not saved into the asset - an asset cannot hold a scene reference. Remembered until " +
+                    "Unity recompiles or restarts."),
                 previewPlayer, typeof(UIAnimationPlayer), true);
 
             if (previewPlayer != null) previewPlayers[asset] = previewPlayer;

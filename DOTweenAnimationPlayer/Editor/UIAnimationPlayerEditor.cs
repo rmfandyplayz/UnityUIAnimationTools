@@ -31,6 +31,18 @@ namespace rmf_claude.DOTweenUI
     {
         private static readonly List<string> names = new List<string>();
 
+        // What OnSceneGUI needs, read outside it. Unity logs an error on every call if OnSceneGUI
+        // touches targets or serializedObject, since those span the whole selection while OnSceneGUI
+        // runs once per target - and it runs on every Scene view repaint. The gizmos only draw for a
+        // single selection, and they need THIS editor's serializedObject rather than a new one, because
+        // that is where the Inspector keeps which animations and steps are expanded.
+        private SerializedObject sceneSerialized;
+
+        private void OnEnable()
+        {
+            sceneSerialized = targets.Length == 1 ? serializedObject : null;
+        }
+
         private void OnDisable()
         {
             // Selecting something else abandons the preview, so put the scene back first.
@@ -42,6 +54,8 @@ namespace rmf_claude.DOTweenUI
             DrawDefaultInspector();
 
             if (targets.Length > 1) return;
+
+            sceneSerialized = serializedObject;
 
             var player = (UIAnimationPlayer)target;
 
@@ -77,9 +91,9 @@ namespace rmf_claude.DOTweenUI
 
         private void OnSceneGUI()
         {
-            if (targets.Length > 1) return;
+            if (sceneSerialized == null) return;
 
-            UIAnimationGizmos.Draw(serializedObject, (UIAnimationPlayer)target);
+            UIAnimationGizmos.Draw(sceneSerialized, (UIAnimationPlayer)target);
         }
 
         /// <summary>
