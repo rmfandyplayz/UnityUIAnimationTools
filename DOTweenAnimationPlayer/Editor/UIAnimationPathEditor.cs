@@ -81,9 +81,13 @@ namespace rmf_claude.DOTweenUI
 
         public static bool IsEditing(SerializedProperty step)
         {
-            return player != null
-                && step.serializedObject.targetObject == player
-                && step.propertyPath == stepPath;
+            return IsEditing(step.serializedObject.targetObject as UIAnimationPlayer, step.propertyPath);
+        }
+
+        /// <summary>Whether the step at this property path on this player is the one being edited.</summary>
+        public static bool IsEditing(UIAnimationPlayer owner, string path)
+        {
+            return player != null && owner == player && path == stepPath;
         }
 
         /// <summary>Whether this step can be edited in the Scene view, and if not, a reason to show.</summary>
@@ -216,7 +220,7 @@ namespace rmf_claude.DOTweenUI
                 return;
             }
 
-            var type = (UIAnimationStepType)step.FindPropertyRelative("Type").enumValueIndex;
+            var type = (UIAnimationStepType)step.FindPropertyRelative("Type").intValue;
             bool positional = type == UIAnimationStepType.AnchoredPosition || type == UIAnimationStepType.LocalPosition;
 
             if (!positional || !step.FindPropertyRelative("UseCustomPath").boolValue)
@@ -249,12 +253,9 @@ namespace rmf_claude.DOTweenUI
             string status = null;
             RectTransform rect = ResolveRect(step);
 
-            if (UIAnimationPreview.IsPreviewing())
-            {
-                // The preview moves the object, and the path is drawn relative to where it sits.
-                status = "Paused while an animation preview is running.";
-            }
-            else if (rect == null)
+            // Drawn from the resting state and the step's worked-out start rather than from where the
+            // object sits, so it stays put while a preview moves the object around underneath it.
+            if (rect == null)
             {
                 status = "This step has no RectTransform target, so there is nothing to draw the path for. " +
                          "Check its target slot and Target Path.";
@@ -274,32 +275,36 @@ namespace rmf_claude.DOTweenUI
         /// Returns true when something changed.
         ///
         /// Values are computed exactly as playback resolves them, with one substitution: the
-        /// Baseline a player captures at Awake is the value the property holds at rest, and in edit
-        /// mode that is simply the value it holds now. A step without Use From starts wherever the
-        /// object is when it runs, which the editor can only take to be where it is now - so a path
-        /// after a step that moves the object is drawn from the object's resting place.
+        /// Baseline a player captures at Awake is the value the property holds at rest - in edit
+        /// mode what it holds now, or what it held when a running preview started. A step without
+        /// Use From starts wherever the steps before it leave the object, which UIAnimationSimulation
+        /// works out by replaying the animation from rest.
         /// </summary>
         private static bool DrawAndEdit(SerializedProperty step, UIAnimationStepType type, RectTransform rect)
         {
-            var plane = new PlaneMapping(rect, type == UIAnimationStepType.AnchoredPosition);
+            UIAnimationRectState restState = UIAnimationSimulation.RestOf(rect);
+            var plane = new PlaneMapping(rect, restState, type == UIAnimationStepType.AnchoredPosition);
 
             SerializedProperty points = step.FindPropertyRelative("Waypoints");
             SerializedProperty from = step.FindPropertyRelative("FromVector");
             SerializedProperty to = step.FindPropertyRelative("ToVector");
 
-            var fromMode = (UIAnimationEndpointMode)step.FindPropertyRelative("FromMode").enumValueIndex;
-            var toMode = (UIAnimationEndpointMode)step.FindPropertyRelative("ToMode").enumValueIndex;
+            var fromMode = (UIAnimationEndpointMode)step.FindPropertyRelative("FromMode").intValue;
+            var toMode = (UIAnimationEndpointMode)step.FindPropertyRelative("ToMode").intValue;
             bool useFrom = HasAuthoredStart(step);
-            bool curved = step.FindPropertyRelative("PathShape").enumValueIndex == (int)UIAnimationPathShape.Curved;
+            bool curved = step.FindPropertyRelative("PathShape").intValue == (int)UIAnimationPathShape.Curved;
 
-            Vector3 rest = plane.Flatten(ReadValue(rect, type));
-            Vector3 fromOrigin = Origin(fromMode, rest);
-            Vector3 toOrigin = Origin(toMode, rest);
+            Vector3 rest = plane.Flatten(restState.Read(type));
+            Vector3 start = plane.Flatten(SimulatedStart(step, rest));
+            bool relative = IsRelative(step);
+
+            Vector3 fromOrigin = Origin(fromMode, rest, start, false);
+            Vector3 toOrigin = Origin(toMode, rest, start, relative);
 
             // Value space: start, each point, To. The same list PathPoints builds at runtime, with
             // the start the path plugin prepends at the front.
             values.Clear();
-            values.Add(useFrom ? plane.Flatten(fromOrigin + from.vector3Value) : rest);
+            values.Add(useFrom ? plane.Flatten(fromOrigin + from.vector3Value) : start);
 
             for (int i = 0; i < points.arraySize; i++)
             {
@@ -598,35 +603,58 @@ namespace rmf_claude.DOTweenUI
             return host != null ? host.GetComponent<RectTransform>() : null;
         }
 
-        private static Vector3 ReadValue(RectTransform rect, UIAnimationStepType type)
+        /// <summary>
+        /// Where the step starts when it has no From: wherever the steps before it leave the object,
+        /// worked out from rest. Falls back to rest itself, which is right for the first step.
+        /// </summary>
+        private static Vector3 SimulatedStart(SerializedProperty step, Vector3 rest)
         {
-            switch (type)
+            var owner = step.serializedObject.targetObject as UIAnimationPlayer;
+
+            int animationIndex;
+            int stepIndex;
+            if (owner == null || !UIAnimationTargets.TryParseStepPath(step.propertyPath, out animationIndex, out stepIndex))
             {
-                case UIAnimationStepType.AnchoredPosition: return rect.anchoredPosition;
-                case UIAnimationStepType.LocalPosition: return rect.localPosition;
-                case UIAnimationStepType.Scale: return rect.localScale;
-                case UIAnimationStepType.SizeDelta: return rect.sizeDelta;
-                case UIAnimationStepType.OffsetMin: return rect.offsetMin;
-                case UIAnimationStepType.OffsetMax: return rect.offsetMax;
+                return rest;
+            }
+
+            List<UIAnimation> animations = owner.EditorAnimations;
+            if (animationIndex >= animations.Count) return rest;
+
+            Vector3 start;
+            Vector3 unused;
+            return UIAnimationSimulation.TryStartOf(animations[animationIndex], owner.gameObject, stepIndex, out start, out unused)
+                ? start
+                : rest;
+        }
+
+        /// <summary>
+        /// What an authored value is added to, for a given mode: nothing for Absolute, the resting
+        /// value for Baseline, and the step's start for Current - but only on a relative step. With a
+        /// From, playback reads a Current To as the number typed, so this does too.
+        /// </summary>
+        private static Vector3 Origin(UIAnimationEndpointMode mode, Vector3 rest, Vector3 start, bool relative)
+        {
+            switch (mode)
+            {
+                case UIAnimationEndpointMode.Baseline: return rest;
+                case UIAnimationEndpointMode.Current: return relative ? start : Vector3.zero;
                 default: return Vector3.zero;
             }
         }
 
-        /// <summary>
-        /// What an authored value is added to, for a given mode. Baseline and Current both come
-        /// out as the resting value here: Baseline IS the resting value, and Current is relative to
-        /// the start, which for a step with no From is where the object sits.
-        /// </summary>
-        private static Vector3 Origin(UIAnimationEndpointMode mode, Vector3 rest)
+        /// <summary>Mirrors UIAnimationStep.IsRelative for a serialized step.</summary>
+        private static bool IsRelative(SerializedProperty step)
         {
-            return mode == UIAnimationEndpointMode.Absolute ? Vector3.zero : rest;
+            return !step.FindPropertyRelative("UseFrom").boolValue
+                && step.FindPropertyRelative("ToMode").intValue == (int)UIAnimationEndpointMode.Current;
         }
 
         /// <summary>Mirrors UIAnimationStep.HasAuthoredStart for a serialized step.</summary>
         private static bool HasAuthoredStart(SerializedProperty step)
         {
             return step.FindPropertyRelative("UseFrom").boolValue
-                && step.FindPropertyRelative("FromMode").enumValueIndex != (int)UIAnimationEndpointMode.Current;
+                && step.FindPropertyRelative("FromMode").intValue != (int)UIAnimationEndpointMode.Current;
         }
 
         /// <summary>
@@ -636,14 +664,13 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         private static bool TryStartInToSpace(SerializedProperty step, UIAnimationStepType type, out Vector3 start)
         {
-            var fromMode = (UIAnimationEndpointMode)step.FindPropertyRelative("FromMode").enumValueIndex;
-            var toMode = (UIAnimationEndpointMode)step.FindPropertyRelative("ToMode").enumValueIndex;
+            var fromMode = (UIAnimationEndpointMode)step.FindPropertyRelative("FromMode").intValue;
+            var toMode = (UIAnimationEndpointMode)step.FindPropertyRelative("ToMode").intValue;
             Vector3 from = step.FindPropertyRelative("FromVector").vector3Value;
             bool useFrom = HasAuthoredStart(step);
 
-            // Offsets from the start, so the start is the origin. Also true of a Baseline step with
-            // no From, which starts at rest - the baseline itself.
-            if (!useFrom && toMode != UIAnimationEndpointMode.Absolute)
+            // Offsets from the start, so the start is the origin.
+            if (IsRelative(step))
             {
                 start = Vector3.zero;
                 return true;
@@ -662,10 +689,11 @@ namespace rmf_claude.DOTweenUI
                 return false;
             }
 
-            Vector3 rest = ReadValue(rect, type);
-            Vector3 startValue = useFrom ? Origin(fromMode, rest) + from : rest;
+            Vector3 rest = UIAnimationSimulation.RestOf(rect).Read(type);
+            Vector3 simulated = SimulatedStart(step, rest);
+            Vector3 startValue = useFrom ? Origin(fromMode, rest, simulated, false) + from : simulated;
 
-            start = startValue - Origin(toMode, rest);
+            start = startValue - Origin(toMode, rest, simulated, IsRelative(step));
             return true;
         }
 
@@ -689,12 +717,12 @@ namespace rmf_claude.DOTweenUI
             public readonly Vector3 Right;
             public readonly Vector3 Up;
 
-            public PlaneMapping(RectTransform rect, bool anchoredPosition)
+            public PlaneMapping(RectTransform rect, UIAnimationRectState rest, bool anchoredPosition)
             {
                 parent = rect.parent;
                 anchored = anchoredPosition;
-                anchorOffset = (Vector2)rect.localPosition - rect.anchoredPosition;
-                localZ = rect.localPosition.z;
+                anchorOffset = rest.AnchorReference;
+                localZ = rest.LocalZ;
 
                 // Points move in the parent's XY plane - the plane the canvas lies in - so a drag in
                 // a perspective Scene view cannot push one off the canvas in depth.

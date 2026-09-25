@@ -49,18 +49,8 @@ namespace rmf_claude.DOTweenUI
 
             EditorGUILayout.Space();
 
-            if (Application.isPlaying)
-            {
-                EditorGUILayout.LabelField("Preview", EditorStyles.boldLabel);
-            }
-            else
-            {
-                EditorGUILayout.LabelField("Preview (edit mode)", EditorStyles.boldLabel);
-
-                EditorGUILayout.HelpBox(
-                    "Edit-mode preview animates the real objects in your scene.\n\n" + UIAnimationPreview.EditModeNote,
-                    UIAnimationPreview.IsPreviewing(player) ? MessageType.Warning : MessageType.Info);
-            }
+            EditorGUILayout.LabelField(
+                Application.isPlaying ? "Preview" : "Preview (edit mode)", EditorStyles.boldLabel);
 
             CollectNames(player);
 
@@ -71,7 +61,25 @@ namespace rmf_claude.DOTweenUI
 
             UIAnimationPreview.DrawFooter(player);
 
+            // Under the buttons rather than between the heading and them: it is read once, and the
+            // buttons are used every time.
+            if (!Application.isPlaying)
+            {
+                EditorGUILayout.HelpBox(
+                    "Edit-mode preview animates the real objects in your scene.\n\n" + UIAnimationPreview.EditModeNote,
+                    UIAnimationPreview.IsPreviewing(player) ? MessageType.Warning : MessageType.Info);
+
+                UIAnimationGizmos.DrawButton();
+            }
+
             if (Application.isPlaying || UIAnimationPreview.IsPreviewing(player)) Repaint();
+        }
+
+        private void OnSceneGUI()
+        {
+            if (targets.Length > 1) return;
+
+            UIAnimationGizmos.Draw(serializedObject, (UIAnimationPlayer)target);
         }
 
         /// <summary>

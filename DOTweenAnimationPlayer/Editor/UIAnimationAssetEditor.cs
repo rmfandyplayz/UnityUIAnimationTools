@@ -38,9 +38,49 @@ namespace rmf_claude.DOTweenUI
 
         private static readonly List<string> shadowed = new List<string>();
 
+        // Which player each open asset inspector is previewing on, so the step drawer can check an
+        // asset's steps against a real scene and the gizmos have somewhere to draw. Keyed by asset
+        // because the drawer only knows the serialized object it is drawing.
+        private static readonly Dictionary<UIAnimationAsset, UIAnimationPlayer> previewPlayers =
+            new Dictionary<UIAnimationAsset, UIAnimationPlayer>();
+
+        /// <summary>
+        /// The Preview On player an open inspector has chosen for this asset, when that player really
+        /// uses it. Null otherwise - there is then no scene to resolve the asset's steps against.
+        /// </summary>
+        public static UIAnimationPlayer PreviewPlayerFor(UIAnimationAsset asset)
+        {
+            UIAnimationPlayer player;
+            if (asset == null || !previewPlayers.TryGetValue(asset, out player)) return null;
+
+            return player != null && player.EditorShared == asset ? player : null;
+        }
+
+        private void OnEnable()
+        {
+            SceneView.duringSceneGui += OnSceneView;
+        }
+
         private void OnDisable()
         {
+            SceneView.duringSceneGui -= OnSceneView;
+
+            var asset = target as UIAnimationAsset;
+            UIAnimationPlayer registered;
+            if (asset != null && previewPlayers.TryGetValue(asset, out registered) && registered == previewPlayer)
+            {
+                previewPlayers.Remove(asset);
+            }
+
             UIAnimationPreview.EndIfOwnedBy(this);
+        }
+
+        private void OnSceneView(SceneView view)
+        {
+            if (target == null) return;
+
+            UIAnimationPlayer player = PreviewPlayerFor((UIAnimationAsset)target);
+            if (player != null) UIAnimationGizmos.Draw(serializedObject, player);
         }
 
         public override void OnInspectorGUI()
@@ -74,6 +114,9 @@ namespace rmf_claude.DOTweenUI
                     "Not saved into the asset - an asset cannot hold a scene reference."),
                 previewPlayer, typeof(UIAnimationPlayer), true);
 
+            if (previewPlayer != null) previewPlayers[asset] = previewPlayer;
+            else previewPlayers.Remove(asset);
+
             if (previewPlayer == null)
             {
                 EditorGUILayout.HelpBox(
@@ -98,14 +141,6 @@ namespace rmf_claude.DOTweenUI
 
             bool active = UIAnimationPreview.IsPreviewing(previewPlayer);
 
-            if (!Application.isPlaying)
-            {
-                EditorGUILayout.HelpBox(
-                    "Edit-mode preview animates the real objects in '" + previewPlayer.name + "'.\n\n" +
-                    UIAnimationPreview.EditModeNote,
-                    active ? MessageType.Warning : MessageType.Info);
-            }
-
             for (int i = 0; i < asset.Animations.Count; i++)
             {
                 UIAnimation animation = asset.Animations[i];
@@ -115,6 +150,16 @@ namespace rmf_claude.DOTweenUI
             }
 
             UIAnimationPreview.DrawFooter(previewPlayer);
+
+            if (!Application.isPlaying)
+            {
+                EditorGUILayout.HelpBox(
+                    "Edit-mode preview animates the real objects in '" + previewPlayer.name + "'.\n\n" +
+                    UIAnimationPreview.EditModeNote,
+                    active ? MessageType.Warning : MessageType.Info);
+
+                UIAnimationGizmos.DrawButton();
+            }
 
             if (Application.isPlaying || active) Repaint();
         }

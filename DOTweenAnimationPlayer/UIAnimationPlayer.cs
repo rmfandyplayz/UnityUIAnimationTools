@@ -468,22 +468,7 @@ namespace rmf_claude.DOTweenUI
             List<UIAnimationStep> steps = animation.Steps;
             if (steps.Count == 0) return null;
 
-            stepStarts.Clear();
-
-            float total = 0f;
-            float groupStart = 0f;
-
-            for (int i = 0; i < steps.Count; i++)
-            {
-                UIAnimationStep step = steps[i];
-
-                // A step group starts with an AfterPrevious step and gathers the WithPrevious
-                // steps below it. Joined steps offset from the group start, not from each other.
-                if (i > 0 && step.Start == UIAnimationStartMode.AfterPrevious) groupStart = total;
-
-                stepStarts.Add(groupStart + step.Delay);
-                total = Mathf.Max(total, groupStart + step.TotalDuration);
-            }
+            LayOutSteps(steps, stepStarts);
 
             Sequence sequence = DOTween.Sequence();
             sequence.SetAutoKill(true);
@@ -520,7 +505,8 @@ namespace rmf_claude.DOTweenUI
                 else
                 {
                     string context = "UIAnimationPlayer on '" + name + "' animation '" + animation.Name + "' step " + i;
-                    Tween tween = step.BuildTween(animation.ApplyFromValuesImmediately, frameRate, at, context);
+                    Tween tween = step.BuildTween(animation.ApplyFromValuesImmediately, frameRate, at,
+                        animation.SnapsEveryStep, context);
                     if (tween == null) continue;
 
                     sequence.Insert(at, tween);
@@ -535,6 +521,34 @@ namespace rmf_claude.DOTweenUI
             }
 
             return sequence;
+        }
+
+        /// <summary>
+        /// Where each step starts on its animation's timeline, delay included - the positions
+        /// Append/Join would produce - written into starts in step order. Returns the length of one
+        /// loop. Public so the editor's Scene-view gizmos lay steps out by exactly the rule playback
+        /// uses rather than a copy of it.
+        /// </summary>
+        public static float LayOutSteps(List<UIAnimationStep> steps, List<float> starts)
+        {
+            starts.Clear();
+
+            float total = 0f;
+            float groupStart = 0f;
+
+            for (int i = 0; i < steps.Count; i++)
+            {
+                UIAnimationStep step = steps[i];
+
+                // A step group starts with an AfterPrevious step and gathers the WithPrevious
+                // steps below it. Joined steps offset from the group start, not from each other.
+                if (i > 0 && step.Start == UIAnimationStartMode.AfterPrevious) groupStart = total;
+
+                starts.Add(groupStart + step.Delay);
+                total = Mathf.Max(total, groupStart + step.TotalDuration);
+            }
+
+            return total;
         }
 
         private void Kill(UIAnimation animation, bool complete, UIAnimationEndReason reason)
@@ -685,6 +699,16 @@ namespace rmf_claude.DOTweenUI
         }
 
         private readonly List<UIAnimation> previousRuntime = new List<UIAnimation>();
+
+        /// <summary>
+        /// Makes the state the targets are in right now the place the preview's next Play-again
+        /// starts over from. Editor-only: the preview calls it after Reset, so Play straight after
+        /// Reset runs from the frame Reset showed rather than from before it.
+        /// </summary>
+        public void EditorMarkPreviewStart()
+        {
+            EditorCaptureSnapshots(runtime);
+        }
 
         private static void EditorCaptureSnapshots(List<UIAnimation> animations)
         {

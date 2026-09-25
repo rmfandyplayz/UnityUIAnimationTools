@@ -31,6 +31,10 @@ namespace rmf_claude.DOTweenUI
     /// alphabetised once while the numbers were still implicit, which turned 16 authored Scale
     /// steps on the main menu buttons into GraphicAlpha steps that faded them to invisible.
     /// New types take the next free number.
+    ///
+    /// The order the Inspector lists them in is not this order: the step drawer groups them into
+    /// categories and sorts each one alphabetically by itself, so the numbers never have to be
+    /// shuffled to make the dropdown read well.
     /// </summary>
     public enum UIAnimationStepType
     {
@@ -51,6 +55,9 @@ namespace rmf_claude.DOTweenUI
         ShakeAnchoredPosition = 14,
         SizeDelta = 15,
         PlaySound = 16,
+        PunchRotation = 17,
+        ShakeRotation = 18,
+        ShakeScale = 19,
     }
 
     /// <summary>
@@ -84,7 +91,7 @@ namespace rmf_claude.DOTweenUI
     /// Serialized as an integer - see the note on UIAnimationStepType. Numbers are the contract.
     ///
     /// Curved is 0 on purpose: a step added with + on a serialized list arrives zero-filled, and
-    /// a smooth curve is what someone ticking "Use Custom Movement Path" almost always wants.
+    /// a smooth curve is what someone ticking "Custom Path" almost always wants.
     /// </summary>
     public enum UIAnimationPathShape
     {
@@ -164,11 +171,12 @@ namespace rmf_claude.DOTweenUI
         [Tooltip("Seconds to wait before this step starts, measured from wherever Start places it.")]
         public float Delay;
 
-        [Tooltip("Easing curve preset. Out* eases decelerate into the end value and suit most UI.")]
+        [Tooltip("Easing curve preset. Out* eases decelerate into the end value and suit most UI.\n\n" +
+                 "Custom Curve, at the top of the list, swaps the preset for a curve you draw yourself.")]
         public Ease EaseType = Ease.OutQuad;
 
-        [Tooltip("Use a hand-drawn AnimationCurve instead of the Ease preset.\n" +
-                 "The curve editor has a preset bar at the bottom for saving and reusing shapes.")]
+        [Tooltip("Use a hand-drawn AnimationCurve instead of the Ease preset. Set by picking Custom Curve " +
+                 "in the Ease dropdown; the preset underneath is kept for when you pick one again.")]
         public bool UseCustomCurve;
 
         [Tooltip("Custom easing. Time runs 0 to 1 left to right; value 0 = the FROM value, 1 = the TO value.\n" +
@@ -236,7 +244,10 @@ namespace rmf_claude.DOTweenUI
         [Tooltip("How random the shake direction is, in degrees. 0 = shakes along one axis only.")]
         public float Randomness = 90f;
 
-        [Tooltip("Round positions to whole pixels each frame. Useful for pixel art, causes stepping otherwise.")]
+        [Tooltip("Round this step's positions or sizes to whole units each frame. Useful for pixel art, " +
+                 "causes stepping otherwise.\n\n" +
+                 "Usually set once for the whole animation with its own Snapping box instead. This one is " +
+                 "shown when the animation's Snap Per Step is on, and always snaps when ticked.")]
         public bool Snapping;
 
         [Tooltip("Travel to To along a path through the points below, instead of in a straight line.\n\n" +
@@ -391,9 +402,41 @@ namespace rmf_claude.DOTweenUI
         /// <summary>True for punch/shake, which have no meaningful FROM/TO pair.</summary>
         public static bool IsImpulse(UIAnimationStepType type)
         {
-            return type == UIAnimationStepType.PunchScale
-                || type == UIAnimationStepType.PunchAnchoredPosition
-                || type == UIAnimationStepType.ShakeAnchoredPosition;
+            switch (type)
+            {
+                case UIAnimationStepType.PunchAnchoredPosition:
+                case UIAnimationStepType.PunchRotation:
+                case UIAnimationStepType.PunchScale:
+                case UIAnimationStepType.ShakeAnchoredPosition:
+                case UIAnimationStepType.ShakeRotation:
+                case UIAnimationStepType.ShakeScale:
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// True for the step types DOTween can round to whole units as they play: the ones that move
+        /// or resize a rect. Scale and rotation have no snapping option in DOTween.
+        /// </summary>
+        public static bool SupportsSnapping(UIAnimationStepType type)
+        {
+            switch (type)
+            {
+                case UIAnimationStepType.AnchoredPosition:
+                case UIAnimationStepType.LocalPosition:
+                case UIAnimationStepType.PunchAnchoredPosition:
+                case UIAnimationStepType.ShakeAnchoredPosition:
+                case UIAnimationStepType.SizeDelta:
+                case UIAnimationStepType.OffsetMin:
+                case UIAnimationStepType.OffsetMax:
+                    return true;
+
+                default:
+                    return false;
+            }
         }
 
         /// <summary>
@@ -574,10 +617,13 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.Scale:
                 case UIAnimationStepType.PunchScale:
+                case UIAnimationStepType.ShakeScale:
                     if (rect != null) baselineVector = rect.localScale;
                     break;
 
                 case UIAnimationStepType.Rotation:
+                case UIAnimationStepType.PunchRotation:
+                case UIAnimationStepType.ShakeRotation:
                     if (rect != null) baselineVector = rect.localEulerAngles;
                     break;
 
@@ -653,10 +699,13 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.Scale:
                 case UIAnimationStepType.PunchScale:
+                case UIAnimationStepType.ShakeScale:
                     if (rect != null) rect.localScale = baselineVector;
                     break;
 
                 case UIAnimationStepType.Rotation:
+                case UIAnimationStepType.PunchRotation:
+                case UIAnimationStepType.ShakeRotation:
                     if (rect != null) rect.localEulerAngles = baselineVector;
                     break;
 
@@ -864,26 +913,30 @@ namespace rmf_claude.DOTweenUI
         /// timelineOffset is where it sits in the sequence, so every step shares one frame grid.
         /// The frame rate arrives per step deliberately - a per-step override would only need the
         /// player to resolve a different number, not any new plumbing here.
+        ///
+        /// snapAll is the animation's own Snapping. It adds to this step's box rather than replacing
+        /// it, so a step authored with Snapping ticked before the animation had one still snaps.
         /// </summary>
-        public Tween BuildTween(bool applyFromImmediately, float frameRate, float timelineOffset, string context)
+        public Tween BuildTween(bool applyFromImmediately, float frameRate, float timelineOffset, bool snapAll, string context)
         {
             if (IsInstant(Type)) return null;
             if (!HasTarget(context)) return null;
 
             bool useFrom = HasAuthoredStart;
             bool relative = IsRelative;
+            bool snap = Snapping || snapAll;
             Tween tween;
 
             if (HasPath)
             {
-                tween = BuildPathTween(applyFromImmediately);
+                tween = BuildPathTween(applyFromImmediately, snap);
                 if (tween == null) return null;
             }
             else switch (Type)
             {
                 case UIAnimationStepType.AnchoredPosition:
                 {
-                    var t = rect.DOAnchorPos(ResolveVector(ToMode, ToVector), Duration, Snapping);
+                    var t = rect.DOAnchorPos(ResolveVector(ToMode, ToVector), Duration, snap);
                     if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
@@ -892,7 +945,7 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.LocalPosition:
                 {
-                    var t = rect.DOLocalMove(ResolveVector(ToMode, ToVector), Duration, Snapping);
+                    var t = rect.DOLocalMove(ResolveVector(ToMode, ToVector), Duration, snap);
                     if (useFrom) t.From(ResolveVector(FromMode, FromVector), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
@@ -919,7 +972,7 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.SizeDelta:
                 {
-                    var t = rect.DOSizeDelta(ResolveVector(ToMode, ToVector), Duration, Snapping);
+                    var t = rect.DOSizeDelta(ResolveVector(ToMode, ToVector), Duration, snap);
                     if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
@@ -933,7 +986,7 @@ namespace rmf_claude.DOTweenUI
                     RectTransform target = rect;
                     var t = DOTween.To(() => target.offsetMin, v => target.offsetMin = v,
                                        (Vector2)ResolveVector(ToMode, ToVector), Duration);
-                    t.SetOptions(Snapping);
+                    t.SetOptions(snap);
                     if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
@@ -945,7 +998,7 @@ namespace rmf_claude.DOTweenUI
                     RectTransform target = rect;
                     var t = DOTween.To(() => target.offsetMax, v => target.offsetMax = v,
                                        (Vector2)ResolveVector(ToMode, ToVector), Duration);
-                    t.SetOptions(Snapping);
+                    t.SetOptions(snap);
                     if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
@@ -1002,11 +1055,26 @@ namespace rmf_claude.DOTweenUI
                     break;
 
                 case UIAnimationStepType.PunchAnchoredPosition:
-                    tween = rect.DOPunchAnchorPos(ToVector, Duration, Vibrato, Elasticity, Snapping);
+                    tween = rect.DOPunchAnchorPos(ToVector, Duration, Vibrato, Elasticity, snap);
+                    break;
+
+                case UIAnimationStepType.PunchRotation:
+                    tween = rect.DOPunchRotation(ToVector, Duration, Vibrato, Elasticity);
                     break;
 
                 case UIAnimationStepType.ShakeAnchoredPosition:
-                    tween = rect.DOShakeAnchorPos(Duration, ToFloat, Vibrato, Randomness, Snapping);
+                    tween = rect.DOShakeAnchorPos(Duration, ToFloat, Vibrato, Randomness, snap);
+                    break;
+
+                // The rotation and scale shakes take a per-axis strength rather than ShakeAnchoredPosition's
+                // single number. A single number shakes all three axes, and on a UI element rotating
+                // around X or Y reads as the element tipping over in 3D - Z alone is the usual shake.
+                case UIAnimationStepType.ShakeRotation:
+                    tween = rect.DOShakeRotation(Duration, ToVector, Vibrato, Randomness);
+                    break;
+
+                case UIAnimationStepType.ShakeScale:
+                    tween = rect.DOShakeScale(Duration, ToVector, Vibrato, Randomness);
                     break;
 
                 default:
@@ -1099,7 +1167,7 @@ namespace rmf_claude.DOTweenUI
         /// SetRelative works as it does on every other step: every point, To included, is offset by
         /// the value at startup. That is why waypoints follow To's mode rather than having their own.
         /// </summary>
-        private Tween BuildPathTween(bool applyFromImmediately)
+        private Tween BuildPathTween(bool applyFromImmediately, bool snap)
         {
             RectTransform target = rect;
             DOGetter<Vector3> read;
@@ -1143,7 +1211,7 @@ namespace rmf_claude.DOTweenUI
 
             // DOTween's own shortcuts round inside the plugin; the path plugin has no snapping
             // option, so it happens on the way out instead. Scale never offered Snapping.
-            if (Snapping && Type != UIAnimationStepType.Scale)
+            if (snap && Type != UIAnimationStepType.Scale)
             {
                 DOSetter<Vector3> unsnapped = write;
                 write = v => unsnapped(new Vector3(Mathf.Round(v.x), Mathf.Round(v.y), Mathf.Round(v.z)));

@@ -58,6 +58,20 @@ namespace rmf_claude.DOTweenUI
                  "Punch and shake steps are never stepped - they drive their own oscillation.")]
         public float FPS = 12f;
 
+        // Drawn together with SnapPerStep as one DISABLED / ALL STEPS / PER STEP button.
+        [UIAnimationSnapMode("SnapPerStep")]
+        [Tooltip("Round positions and sizes to whole units every frame, on every step that moves or " +
+                 "resizes something. Useful for pixel art; causes visible stepping on a slow move otherwise.\n\n" +
+                 "Scale and rotation are never snapped - DOTween has no option for them.")]
+        public bool Snapping;
+
+        // Shown through Snapping's button rather than as a box of its own.
+        [HideInInspector]
+        [Tooltip("Choose snapping step by step instead. Each position or size step then shows its own " +
+                 "Snapping box, and the animation-wide Snapping is ignored.\n\n" +
+                 "A step whose own box is ticked always snaps, so its box stays visible either way.")]
+        public bool SnapPerStep;
+
         [Tooltip("Snap every FROM value to its target as soon as the animation starts, rather than " +
                  "when each individual step begins. Prevents a visible flash on delayed steps.")]
         public bool ApplyFromValuesImmediately = true;
@@ -84,6 +98,16 @@ namespace rmf_claude.DOTweenUI
         public float EffectiveFrameRate
         {
             get { return PlayAtCustomFPS && FPS > 0f ? FPS : 0f; }
+        }
+
+        /// <summary>
+        /// Whether the animation-wide Snapping applies. A step also snaps when its own box is ticked,
+        /// whatever this says: steps carried Snapping before animations did, so an animation that
+        /// predates the animation-wide box has it off and keeps snapping exactly the steps it did.
+        /// </summary>
+        public bool SnapsEveryStep
+        {
+            get { return Snapping && !SnapPerStep; }
         }
 
         // Runtime state. One live Sequence per animation, owned here.

@@ -47,15 +47,35 @@ And one asset, which is entirely optional:
 2. `+` on **Animations**, set **Name** to `Show`.
 3. `+` on that animation's **Steps**, pick a **Type**. The inspector collapses to only the fields that type uses.
 
-Each step's collapsed header reads like a timeline line: `AFTER   Logo (Scale)   0.25s   Out Back` — start mode, the object it drives, the property in parentheses, duration, ease. When it doesn't fit, a Target Path gives way from its front (`…/HoverHighlight`), since the end of a path is what names the object; otherwise the end is cut. Hover a shortened header for the full text.
+The **Type** dropdown is split into sections — Transform, Punch & Shake, Color & Fade, Material, Other — each alphabetical, so a new type always lands in a sensible place. Every other step in a list is shaded, like spreadsheet rows, so you can see where one expanded step ends and the next begins.
+
+Each step's collapsed header reads like a timeline line: `AFTER   Logo (Scale)   0.25s   Out Back` — start mode, the object it drives, the property in parentheses, duration, ease. A step that drives the player's own GameObject says `[self]` rather than repeating the name at the top of the Inspector. When it doesn't fit, a Target Path gives way from its front (`…/HoverHighlight`), since the end of a path is what names the object; otherwise the end is cut. Hover a shortened header for the full text. A ⚠ at the end of a header means the step will do nothing as authored — see [Type check](#type-check).
 
 ### Step types
 
-`AnchoredPosition` · `LocalPosition` · `Scale` · `Rotation` · `CanvasGroupAlpha` · `GraphicColor` · `GraphicAlpha` · `MaterialFloat` · `MaterialColor` · `PunchScale` · `PunchAnchoredPosition` · `ShakeAnchoredPosition` · `SetActive` · `PlaySound` · `SizeDelta` · `OffsetMin` · `OffsetMax`
+| Section | Types |
+|---|---|
+| Transform | `AnchoredPosition` · `LocalPosition` · `OffsetMax` · `OffsetMin` · `Rotation` · `Scale` · `SizeDelta` |
+| Punch & Shake | `PunchAnchoredPosition` · `PunchRotation` · `PunchScale` · `ShakeAnchoredPosition` · `ShakeRotation` · `ShakeScale` |
+| Color & Fade | `CanvasGroupAlpha` · `GraphicAlpha` · `GraphicColor` |
+| Material | `MaterialColor` · `MaterialFloat` |
+| Other | `PlaySound` · `SetActive` |
 
 `SetActive` and `PlaySound` are **instant** — they happen at a point in the timeline rather than over one, so they show a `Delay` but no `Duration` and no easing.
 
 The position and size steps can also follow a curved or zig-zag route to `To` instead of a straight line — see [Movement paths](#movement-paths).
+
+### Punch and shake
+
+These jolt a property and let it settle back to where it started, so they have no FROM/TO and no Ease — DOTween drives the oscillation itself. They show:
+
+| Field | Punch | Shake |
+|---|---|---|
+| `Punch` / `Strength` | How far it jolts, per axis | How far it shakes — one number for `ShakeAnchoredPosition`, per axis for `ShakeRotation` / `ShakeScale` |
+| `Vibrato` | How many times it oscillates over its Duration | same |
+| `Elasticity` / `Randomness` | How far it may overshoot past its start (0–1) | How random the direction is, in degrees |
+
+**On UI, rotate around Z only.** `PunchRotation` and `ShakeRotation` take a strength per axis so you can leave X and Y at `0` — turning around those tips a flat element over in 3D. `(0, 0, 15)` is a firm shake. `ShakeScale` takes one per axis for the same reason: `(0.25, 0.25, 0)` wobbles without distorting.
 
 ### Sizing a RectTransform
 
@@ -74,7 +94,7 @@ Four step types write the same two rect corners from different directions. That'
 
 `SizeDelta` is size **relative to the anchors**, so on a stretched rect it behaves as padding rather than as pixels. Un-stretch the anchors first if you want a literal pixel size.
 
-All three new types take X/Y (Z is unused) and offer **Snapping** for whole-pixel results.
+All three new types take X/Y (Z is unused) and support [Snapping](#snapping).
 
 ---
 
@@ -114,6 +134,19 @@ An animation whose steps use only empty slots and paths is **portable**: it work
 - `PlaySound` takes an **AudioSource**, and empty means something slightly different — see [Sound](#sound).
 - If a target is missing at play time the step is skipped with a console warning naming the animation and step index. It won't throw.
 
+### Type check
+
+The Inspector checks every step against what it will actually drive, so a broken step shows up while you author it instead of as a Console warning after `Play`. A step that will do nothing gets a ⚠ at the end of its header and a warning row under its target:
+
+| Warning | Meaning |
+|---|---|
+| `'Box' has no Canvas Group` (or Graphic, RectTransform, UI Material Instance) | The Type needs a component the target doesn't have |
+| `Target Path "Iconn" matches nothing` | A typo, or the object was renamed or moved |
+| `Shader 'UI/Default' has no property '_Nope'` | A material step's Shader Property isn't on that material |
+| `No Clip` | A Play Sound step with nothing to play |
+
+It follows playback's own rules exactly — the slot, then the Target Path, then the player's own object — so it checks the object at the end of a Target Path too, `..` included. In a shared set there's no scene to check against until you set **Preview On**; until then only the clip and shader-name checks run. Hover a warning row for the full text.
+
 ---
 
 ## Sequential vs parallel
@@ -132,7 +165,7 @@ Per-step **Delay** works with both. Read the step list top to bottom and that's 
 Each step uses one of two easing sources:
 
 - **Ease** — a DOTween preset. `Out*` eases decelerate into the end value and suit most UI.
-- **Use Custom Curve** — tick it and the Ease dropdown is replaced by an `AnimationCurve` field.
+- **Custom Curve** — the first entry in the same Ease dropdown. Pick it and a **Curve** row appears under Ease for an `AnimationCurve`; pick a preset again to switch back. The preset you had is remembered underneath, and so is the curve.
 
 For the curve, time runs 0→1 left to right, and value `0` = the FROM value, `1` = the TO value. Going above 1 or below 0 overshoots, which is how you build a bounce or an anticipation dip.
 
@@ -172,6 +205,27 @@ The setting is carried across by the [mirror commands](#mirroring-an-animation).
 
 ---
 
+## Snapping
+
+**Snapping** rounds positions and sizes to whole units each frame — pixel-perfect movement for pixel art. It causes visible stepping on a slow move otherwise, which is the point of it. Scale and rotation are never snapped; DOTween has no option for them.
+
+It's one button on the animation, like a step's FROM / TO button. Click it to cycle:
+
+```
+Play At Custom FPS         ☐
+Snapping                   [ DISABLED ]   →   [ ALL STEPS ]   →   [ PER STEP ]
+```
+
+| Setting | What snaps |
+|---|---|
+| `DISABLED` | Nothing — except a step whose own Snapping box is ticked (see below) |
+| `ALL STEPS` | Every step that moves or resizes something. Movement paths too |
+| `PER STEP` | You choose: every position or size step shows its own **Snapping** box |
+
+A step whose own box is ticked **always** snaps, and its box stays visible whatever the button says, so a setting that changes playback is never hidden. That's also how animations authored before the animation-wide setting existed keep working untouched: their steps still carry their own ticks. In code it's still two bools, `Snapping` and `SnapPerStep`.
+
+---
+
 ## FROM / TO
 
 Each endpoint has a **mode**:
@@ -182,22 +236,46 @@ Each endpoint has a **mode**:
 | `Baseline` | The element's resting value, captured at `Awake`, **plus** the typed value as an offset. |
 | `Current` | Whatever the value is when the tween starts, plus the typed value (DOTween relative). Only available on **To**, and only when there is no From. |
 
+Hover a mode dropdown for what its options mean — each one describes only the options it offers. Hover the `To` label for what the row is.
+
+The **From** dropdown doesn't offer `Current`. Older data could set it there, where it never meant "an offset from the start": it makes the step ignore the From value entirely, the same as the button reading `TO`. A step that already has it keeps showing it, with a tooltip that says so, and nothing is rewritten.
+
 **Use `To: Baseline` for anything that should land on its authored resting state.** Ten `Show`s in a row all land on exactly the same value, and if you later change the resting scale/position in the scene the animation follows automatically. This is what stops repeated Show/Hide from drifting.
 
 The **FROM / TO** button at the start of the first endpoint row switches the FROM endpoint on and off (the field is still called `UseFrom` in code). It reads `TO` by default: one row, and the step travels to it from wherever the property already is. Click it and it reads `FROM`: that row becomes the starting value and a `To` row appears under it. It's the same control DOTween's own animation component uses, and it saves a row per step. **Apply From Values Immediately** (on by default, per animation) snaps every FROM value the moment the animation starts rather than when each step begins — this is what prevents an element flashing at full opacity through a delayed step before jumping to 0.
 
-Punch and shake steps have no FROM/TO — they show `Punch` / `Strength` instead, and ignore Ease (they carry their own).
+Punch and shake steps have no FROM/TO — they show `Punch` / `Strength` instead, and ignore Ease (they carry their own). See [Punch and shake](#punch-and-shake).
+
+### Use Current Value
+
+The **record** button at the end of every From and To row copies what the step's target holds right now into that row — drag an object where you want it, click, and the step lands there. It works for positions, sizes, offsets, scale, rotation, alpha, colours and material values.
+
+What it stores depends on the row's mode, so the step always ends up exactly where the object was:
+
+| Mode | Stored |
+|---|---|
+| `Absolute` | The value as it is |
+| `Baseline` | The difference from the resting value |
+| `Current` | The difference from where the step starts |
+
+**Pose inside a preview.** Out of a preview, wherever the object sits *is* its resting value — so `Baseline` and `Current` would always store 0, and those buttons are greyed out until a preview is running. The workflow is the one Unity's Animation window uses for keys:
+
+1. Press **Reset** (or Play) on the animation.
+2. Drag, resize, recolour or rotate the object.
+3. Click the record button on the row.
+4. **Stop and Restore** puts the object back. The value you copied stays.
+
+`Absolute` works any time, but outside a preview the object stays wherever you dragged it. Rotation is read as the nearest angle to zero, so a turn to `-10` isn't copied as `350` and spun the long way round.
 
 ---
 
 ## Movement paths
 
-By default a step moves in a straight line from its start to `To`. Tick **Use Custom Movement Path** (under `To`) and it travels through a list of points on the way instead — an arc for a card flying into a hand, a swoop, a zig-zag.
+By default a step moves in a straight line from its start to `To`. Set **Custom Path** (under `To`) to `Curved` or `Linear` and it travels through a list of points on the way instead — an arc for a card flying into a hand, a swoop, a zig-zag.
 
 ```
 To                    Absolute   X 250    Y 150
-☑ Use Custom Movement Path
-Path Shape            Curved
+Custom Path           Curved
 Point 1               Absolute   X -50    Y 200    [-]
 Point 2               Absolute   X 150    Y -100   [-]
                       [ Add Point ]  [ Edit Path in Scene ]
@@ -205,16 +283,17 @@ Point 2               Absolute   X 150    Y -100   [-]
 
 This is **not** the ease. The path is *where* the object goes; the ease is still *how fast* it gets there — it controls how far along the path the step is, so `Out Quad` still decelerates into `To`, just along the curve. Speed along the path is constant apart from the ease, so a long segment and a short one are covered at the same rate.
 
-| Setting | Meaning |
+| Custom Path | Meaning |
 |---|---|
-| `Curved` | A smooth curve through every point (DOTween's Catmull-Rom path). The default. |
+| `Disabled` | A straight line, as without a path. The default. |
+| `Curved` | A smooth curve through every point (DOTween's Catmull-Rom path). |
 | `Linear` | Straight lines between the points, with a sharp corner at each. |
 
 **Points follow `To`'s mode**, and the mode column beside each point shows which one that is. `Absolute` = as typed, `Baseline` = an offset from the resting value, `Current` = an offset from wherever the step starts. That's what makes a `To: Current` path portable — the same swoop works from wherever the object happens to be. The start of the path is the `From` value when the step has one, and otherwise wherever the object is when the step begins, exactly as without a path.
 
 Available on `AnchoredPosition`, `LocalPosition`, `SizeDelta`, `OffsetMin`, `OffsetMax` and `Scale` — every vector step except `Rotation` (DOTween rotates through a quaternion, not through the Euler values a path would pass through) and punch/shake (no endpoint to travel to). A path through `SizeDelta` or `Scale` is real and works — grow wide, then tall — it just can't be drawn in the Scene view.
 
-With the box ticked but no points, the step still moves in a straight line. Unticking the box keeps the points, so you can switch the path off to compare without losing it.
+With a shape chosen but no points, the step still moves in a straight line. Setting it back to `Disabled` keeps the points, so you can switch the path off to compare without losing it. In code it's still `UseCustomPath` and `PathShape`.
 
 ### Editing a path in the Scene view
 
@@ -232,7 +311,7 @@ Points move in the canvas plane, so a drag can't push one off the canvas in dept
 
 Things worth knowing:
 
-- **The path is drawn from where the object sits now.** A `Baseline` endpoint is the resting value, and in edit mode that's simply the current value. A step without a From starts wherever the object is when the step runs, which the editor can only take to be where it is now — so a path in the *second* step of an animation is drawn from the object's resting place, not from where step one leaves it.
+- **The path is drawn from where the step really starts.** A step without a From starts wherever the steps before it leave the object, and the editor works that out by replaying the animation from rest — so a path in the *second* step is drawn from where step one ends. It stays put while a preview plays, too: it's drawn from the resting state the preview captured, not from wherever the object has got to. What it can't know is where a *different* animation left things, so a step relying on that is drawn as if played from rest.
 - Only position steps can be edited in the Scene view, only on a player (a Shared set has no object to draw on), and not in play mode. The button disables itself and says why.
 - Selecting something else, entering play mode or recompiling ends the edit.
 - The drawn curve reproduces DOTween's own path maths, including its end conventions, and was checked against a real path tween: the object stays on the line.
@@ -395,11 +474,17 @@ The Inspector has **Play / Reset** buttons per animation, and they work **withou
 
 | Button | Does |
 |---|---|
-| `Play` | Runs the animation on the real scene objects, carrying on from wherever the last preview left them |
-| `Reset` | Jumps to the animation's first frame without playing it: steps with a From snap to it, the rest stay put |
+| `Play` | Runs the animation on the real scene objects from its first frame — what `Reset` shows — carrying on from where the last animation ends |
+| `Reset` | Jumps to the animation's first frame without playing it: steps with a From snap to it, the rest stay put. `Play` straight after runs from that frame |
 | `Stop and Restore` | Ends the preview and puts every value back as it was before the first `Play` |
 
-**A preview runs like play mode does.** Play `OpenCredits`, then `CloseCredits`, and the close starts from where the open left things — which is the only way to judge a close animation, since its whole job is to start from the open state. Pressing `Play` on the **same** animation again starts it over from where it started last time, so iterating on one animation still replays it from the top. `Stop and Restore` goes all the way back to rest.
+**A preview chains.** Play `OpenCredits`, then `CloseCredits`, and the close starts from where the open ends — which is the only way to judge a close animation, since its whole job is to start from the open state. If the open is **still playing** when you press the close, it's finished first, so where the close starts never depends on when you clicked. Pressing `Play` on the **same** animation again starts it over from where it started last time, so iterating on one animation still replays it from the top — and after `Reset`, "where it started" is the frame `Reset` showed. `Stop and Restore` goes all the way back to rest.
+
+**Every `Play` starts from the animation's first frame**, exactly as `Reset` then `Play` would: each step with a From jumps to it at once. That matters for an animation with **Apply From Values Immediately** off — in play mode each of its delayed steps waits at its current value until the step begins, which played from rest makes a Close look broken, when in the game it only ever plays after its Open.
+
+Two things here are deliberately not how play mode behaves: that first-frame rule, and interruptions — in play mode `Interrupt Others` stops the running animation where it stands and the next one starts from there. Check either case in play mode if it matters.
+
+The info box under the buttons repeats the rules, and **Scene Gizmos** under it controls the Scene-view drawings — see [Scene gizmos](#scene-gizmos).
 
 Edit-mode preview animates **real objects in your open scene**, so it takes some care:
 
@@ -412,6 +497,29 @@ Edit-mode preview animates **real objects in your open scene**, so it takes some
 - **`Play Sound` steps are skipped** for the whole preview, and **`On Complete` events do not fire** — an `On Complete` is a UnityEvent wired to arbitrary game code, and a preview has no business running that outside play mode.
 
 In play mode the buttons just call the ordinary runtime API, so sound and `On Complete` behave normally.
+
+---
+
+## Scene gizmos
+
+With a player selected, the Scene view draws what its animations do:
+
+- **Position steps** — `AnchoredPosition` and `LocalPosition`, paths included — as a line from start to end with arrows showing which way the object travels: a ring where it starts, a dot where it ends.
+- **Size steps** — `SizeDelta`, `OffsetMin`, `OffsetMax` and `Scale` — as the element's outline at evenly spaced moments of the step, fading in from the first to the last.
+
+Rotation, colour, fades, material values, punch/shake, SetActive and sound aren't drawn. A step that goes nowhere isn't drawn either.
+
+The **Scene Gizmos** button under the preview opens the settings:
+
+| Setting | Options |
+|---|---|
+| Show | `Disabled` · `All Animations` · `Expanded Animations` (the default) · `Expanded Steps` — "expanded" means open in the Inspector, so what you're editing is what you see |
+| Colors | `Distinct` — a different colour per drawing, spread as far apart as possible, with **Shuffle Colors** for a new set · `Rainbow` — red for the first drawing through to purple for the last, in timeline order |
+| Outlines | How many outlines a size step is drawn with, 2 to 12 |
+
+The settings are your own editor preferences — they're never saved into a scene, prefab or asset. A shared set draws on its **Preview On** player. Gizmos are edit-mode only.
+
+Where each step starts comes from replaying the animation from rest, the way the preview plays it, so a step without a From is drawn from where the steps before it leave the object — and the drawings hold still while a preview moves the real objects around underneath them. It was checked against real playback: every drawn moment lands within 0.07 units of where the object really is at that moment, snapping and Play At Custom FPS included. Like the path editor, it can't know where a *different* animation left things: `All Animations` draws each one as if played from rest, so a Close that relies on its Open is drawn from rest.
 
 ---
 
@@ -561,13 +669,12 @@ UI Animation Player
     ▼ Show
         Name                       Show
         ▼ Steps                    2
-            ▼ AFTER  Panel (self) (Canvas Group Alpha)  0.25s  Out Quad
+            ▼ AFTER  [self] (Canvas Group Alpha)  0.25s  Out Quad
                 Type               Canvas Group Alpha
                 Start              After Previous
                 Canvas Group       None            ← empty = this GameObject
                 Duration           0.25
                 Delay              0
-                Use Custom Curve   ☐
                 Ease               Out Quad
                 FROM   [Absolute]  0
                 To     [Absolute]  1
@@ -578,13 +685,13 @@ UI Animation Player
                 Rect Transform     None
                 Duration           0.25
                 Delay              0
-                Use Custom Curve   ☐
                 Ease               Out Back
                 FROM   [Absolute]  X 0.8  Y 0.8  Z 0.8
                 To     [Baseline]  X 0    Y 0    Z 0    ← lands on the authored scale
         Loops                      1
         Loop Type                  Restart
         Play At Custom FPS         ☐
+        Snapping                   [DISABLED]
         Apply From Values Immediately  ✔
         Interrupt Others           ✔
         On Complete                (UnityEvent)
@@ -612,20 +719,20 @@ UI Animation Player
     ▼ TransitionOut
         Name                       TransitionOut
         ▼ Steps                    1
-            ▼ AFTER  Overlay (self) (Material Float)  0.8s  In Out Quad
+            ▼ AFTER  [self] (Material Float)  0.8s  In Out Quad
                 Type               Material Float
                 Start              After Previous
                 Material Inst.     None            ← empty = this GameObject
                 Shader Property    _Progress
                 Duration           0.8
                 Delay              0
-                Use Custom Curve   ☐
                 Ease               In Out Quad
                 FROM   [Absolute]  0
                 To     [Absolute]  1
         Loops                      1
         Loop Type                  Restart
         Play At Custom FPS         ☐
+        Snapping                   [DISABLED]
         Apply From Values Immediately  ✔
         Interrupt Others           ✔
         On Complete                (UnityEvent)
