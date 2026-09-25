@@ -7,7 +7,10 @@
 // -----------------------------------------------------------------------------
 
 using System;
+using System.Collections.Generic;
 using DG.Tweening;
+using DG.Tweening.Core;
+using DG.Tweening.Plugins;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -28,6 +31,10 @@ namespace rmf_claude.DOTweenUI
     /// alphabetised once while the numbers were still implicit, which turned 16 authored Scale
     /// steps on the main menu buttons into GraphicAlpha steps that faded them to invisible.
     /// New types take the next free number.
+    ///
+    /// The order the Inspector lists them in is not this order: the step drawer groups them into
+    /// categories and sorts each one alphabetically by itself, so the numbers never have to be
+    /// shuffled to make the dropdown read well.
     /// </summary>
     public enum UIAnimationStepType
     {
@@ -48,6 +55,9 @@ namespace rmf_claude.DOTweenUI
         ShakeAnchoredPosition = 14,
         SizeDelta = 15,
         PlaySound = 16,
+        PunchRotation = 17,
+        ShakeRotation = 18,
+        ShakeScale = 19,
     }
 
     /// <summary>
@@ -74,6 +84,22 @@ namespace rmf_claude.DOTweenUI
     {
         AfterPrevious = 0,
         WithPrevious = 1,
+    }
+
+    /// <summary>
+    /// How a movement path joins its points.
+    /// Serialized as an integer - see the note on UIAnimationStepType. Numbers are the contract.
+    ///
+    /// Curved is 0 on purpose: a step added with + on a serialized list arrives zero-filled, and
+    /// a smooth curve is what someone ticking "Custom Path" almost always wants.
+    /// </summary>
+    public enum UIAnimationPathShape
+    {
+        /// <summary>A smooth curve through every point (DOTween's Catmull-Rom path).</summary>
+        Curved = 0,
+
+        /// <summary>Straight lines between the points, with a sharp corner at each one.</summary>
+        Linear = 1,
     }
 
     /// <summary>Which value fields a step type actually uses. Drives the inspector drawer.</summary>
@@ -131,11 +157,12 @@ namespace rmf_claude.DOTweenUI
                  "or - if there isn't one - a shared 2D source the framework creates on first use.")]
         public AudioSource AudioSourceTarget;
 
-        [Tooltip("Optional path to a CHILD of the GameObject this player is on, e.g. \"Panel/Icon\".\n\n" +
-                 "Targets resolve in this order: the slot above, then this path, then the player's own " +
-                 "GameObject. Leave it empty and nothing changes.\n\n" +
-                 "Uses Transform.Find, so names must match exactly and only descendants are searched. " +
-                 "Inactive children are found. A path that matches nothing warns once and the step is skipped.")]
+        [Tooltip("Optional path from the GameObject this player is on to the one to animate, e.g. \"Panel/Icon\".\n\n" +
+                 "Only used when the slot above is empty - a direct reference always wins, and the path is " +
+                 "then ignored. With both empty, the player's own GameObject is animated.\n\n" +
+                 "Uses Transform.Find, so names must match exactly. \"..\" steps up to the parent, so " +
+                 "\"../Icon\" is a sibling. Inactive objects are found. A path that matches nothing warns " +
+                 "once and the step is skipped.")]
         public string TargetPath;
 
         [Tooltip("How long the tween runs, in seconds. Does not include Delay.")]
@@ -144,18 +171,21 @@ namespace rmf_claude.DOTweenUI
         [Tooltip("Seconds to wait before this step starts, measured from wherever Start places it.")]
         public float Delay;
 
-        [Tooltip("Easing curve preset. Out* eases decelerate into the end value and suit most UI.")]
+        [Tooltip("Easing curve preset. Out* eases decelerate into the end value and suit most UI.\n\n" +
+                 "Custom Curve, at the top of the list, swaps the preset for a curve you draw yourself.")]
         public Ease EaseType = Ease.OutQuad;
 
-        [Tooltip("Use a hand-drawn AnimationCurve instead of the Ease preset.\n" +
-                 "The curve editor has a preset bar at the bottom for saving and reusing shapes.")]
+        [Tooltip("Use a hand-drawn AnimationCurve instead of the Ease preset. Set by picking Custom Curve " +
+                 "in the Ease dropdown; the preset underneath is kept for when you pick one again.")]
         public bool UseCustomCurve;
 
         [Tooltip("Custom easing. Time runs 0 to 1 left to right; value 0 = the FROM value, 1 = the TO value.\n" +
                  "Going above 1 or below 0 overshoots, which is how you build a bounce.")]
         public AnimationCurve Curve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
 
-        [Tooltip("Tick to force a starting value. Untick to tween from wherever the property already is.")]
+        [Tooltip("FROM = the step starts from an authored value and travels to To.\n" +
+                 "TO = no starting value: the step travels to To from wherever the property already is.\n" +
+                 "Click to switch.")]
         public bool UseFrom;
 
         [Tooltip("Absolute = the value as typed.\nBaseline = resting value captured at Awake, plus the value as an offset.")]
@@ -163,7 +193,7 @@ namespace rmf_claude.DOTweenUI
 
         [Tooltip("Absolute = the value as typed.\n" +
                  "Baseline = resting value captured at Awake, plus the value as an offset. Use this to land on the authored state.\n" +
-                 "Current = relative to the value when the tween starts. Only available when Use From is off.")]
+                 "Current = relative to the value when the tween starts. Only offered while the button reads TO (no From).")]
         public UIAnimationEndpointMode ToMode = UIAnimationEndpointMode.Absolute;
 
         [Tooltip("Starting value for this step.")]
@@ -214,8 +244,25 @@ namespace rmf_claude.DOTweenUI
         [Tooltip("How random the shake direction is, in degrees. 0 = shakes along one axis only.")]
         public float Randomness = 90f;
 
-        [Tooltip("Round positions to whole pixels each frame. Useful for pixel art, causes stepping otherwise.")]
+        [Tooltip("Round this step's positions or sizes to whole units each frame. Useful for pixel art, " +
+                 "causes stepping otherwise.\n\n" +
+                 "Usually set once for the whole animation with its own Snapping box instead. This one is " +
+                 "shown when the animation's Snap Per Step is on, and always snaps when ticked.")]
         public bool Snapping;
+
+        [Tooltip("Travel to To along a path through the points below, instead of in a straight line.\n\n" +
+                 "The ease still applies - it controls how far along the path the step is, so an Out ease " +
+                 "decelerates into To along the curve.")]
+        public bool UseCustomPath;
+
+        [Tooltip("Curved = a smooth curve through every point.\n" +
+                 "Linear = straight lines between the points, with a sharp corner at each one.")]
+        public UIAnimationPathShape PathShape = UIAnimationPathShape.Curved;
+
+        [Tooltip("Points the step passes through, in order, between where it starts and To.\n\n" +
+                 "They are in the same space as To and follow To's mode: Absolute = as typed, Baseline = an " +
+                 "offset from the resting value, Current = an offset from wherever the step starts.")]
+        public List<Vector3> Waypoints = new List<Vector3>();
 
         // Runtime only. Never serialized, so authored data is never mutated by play mode.
         [NonSerialized] private RectTransform rect;
@@ -229,16 +276,35 @@ namespace rmf_claude.DOTweenUI
         [NonSerialized] private float baselineFloat;
         [NonSerialized] private Color baselineColor;
         [NonSerialized] private bool baselineActive;
+
+        // The Type the baseline was captured under, so RestoreBaseline writes back the property that
+        // was actually read even if Type has been changed in the Inspector since.
+        [NonSerialized] private UIAnimationStepType baselineType;
+
         [NonSerialized] private int shaderPropertyId;
         [NonSerialized] private bool shaderPropertyValid;
         [NonSerialized] private bool targetPathMissed;
 
     #if UNITY_EDITOR
         /// <summary>
-        /// Set by the inspector's edit-mode preview so PlaySound steps do nothing. Static because
-        /// preview is a single, editor-only, one-at-a-time operation; there is nothing to scope it to.
+        /// Set by the inspector's edit-mode preview, for as long as a preview is running, so PlaySound
+        /// steps do nothing. Static because preview is a single, editor-only, one-at-a-time operation;
+        /// there is nothing to scope it to.
         /// </summary>
         public static bool EditorSuppressSound;
+
+        // The edit-mode preview's second capture: where this step's property stood when the most
+        // recent preview Play started, as opposed to the baseline, which is where it rests. It is
+        // what lets Play carry on from where the last preview left things and still start the same
+        // animation over from the same place. Same shape as the baseline, and captured by the same
+        // switch, so no step type can be covered by one and missed by the other.
+        [NonSerialized] private bool hasSnapshot;
+        [NonSerialized] private UnityEngine.Object snapshotTarget;
+        [NonSerialized] private UIAnimationStepType snapshotType;
+        [NonSerialized] private Vector3 snapshotVector;
+        [NonSerialized] private float snapshotFloat;
+        [NonSerialized] private Color snapshotColor;
+        [NonSerialized] private bool snapshotActive;
     #endif
 
         // Built on first use and reconfigured per build, so replaying a stepped animation does
@@ -336,9 +402,41 @@ namespace rmf_claude.DOTweenUI
         /// <summary>True for punch/shake, which have no meaningful FROM/TO pair.</summary>
         public static bool IsImpulse(UIAnimationStepType type)
         {
-            return type == UIAnimationStepType.PunchScale
-                || type == UIAnimationStepType.PunchAnchoredPosition
-                || type == UIAnimationStepType.ShakeAnchoredPosition;
+            switch (type)
+            {
+                case UIAnimationStepType.PunchAnchoredPosition:
+                case UIAnimationStepType.PunchRotation:
+                case UIAnimationStepType.PunchScale:
+                case UIAnimationStepType.ShakeAnchoredPosition:
+                case UIAnimationStepType.ShakeRotation:
+                case UIAnimationStepType.ShakeScale:
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// True for the step types DOTween can round to whole units as they play: the ones that move
+        /// or resize a rect. Scale and rotation have no snapping option in DOTween.
+        /// </summary>
+        public static bool SupportsSnapping(UIAnimationStepType type)
+        {
+            switch (type)
+            {
+                case UIAnimationStepType.AnchoredPosition:
+                case UIAnimationStepType.LocalPosition:
+                case UIAnimationStepType.PunchAnchoredPosition:
+                case UIAnimationStepType.ShakeAnchoredPosition:
+                case UIAnimationStepType.SizeDelta:
+                case UIAnimationStepType.OffsetMin:
+                case UIAnimationStepType.OffsetMax:
+                    return true;
+
+                default:
+                    return false;
+            }
         }
 
         /// <summary>
@@ -351,7 +449,10 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         public void Resolve(GameObject owner)
         {
-            GameObject host = ResolveHost(owner);
+            // A filled slot wins outright and the path is never looked up. It is ignored, so it must
+            // not be able to warn about - let alone skip - a step that has a perfectly good target.
+            targetPathMissed = false;
+            GameObject host = DirectTarget() != null ? null : ResolveHost(owner);
 
             switch (TargetKindOf(Type))
             {
@@ -407,23 +508,53 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         private GameObject ResolveHost(GameObject owner)
         {
-            targetPathMissed = false;
-
-            if (string.IsNullOrEmpty(TargetPath)) return owner;
-
-            // Transform.Find takes a slash-separated path and does find inactive children, which
-            // matters for a SetActive step whose whole job is to switch a hidden one back on.
-            Transform found = owner.transform.Find(TargetPath);
-            if (found != null) return found.gameObject;
+            GameObject host = FindHost(owner, TargetPath);
+            if (host != null) return host;
 
             targetPathMissed = true;
 
+            // A sound's slot is optional by design, so a miss there falls back rather than skipping.
+            string consequence = TargetKindOf(Type) == UIAnimationTargetKind.Audio
+                ? "The sound will play on the shared UI source instead."
+                : "The step will be skipped.";
+
             Debug.LogWarning(
                 "UIAnimationPlayer on '" + owner.name + "': a " + Type + " step has Target Path '" +
-                TargetPath + "', which matches no child of '" + owner.name + "'. The step will be skipped.",
+                TargetPath + "', which matches nothing from '" + owner.name + "'. " + consequence,
                 owner);
 
             return null;
+        }
+
+        /// <summary>The step's own target slot for its current Type - the one the Inspector shows.</summary>
+        private UnityEngine.Object DirectTarget()
+        {
+            switch (TargetKindOf(Type))
+            {
+                case UIAnimationTargetKind.CanvasGroup: return CanvasGroupTarget;
+                case UIAnimationTargetKind.Graphic: return GraphicTarget;
+                case UIAnimationTargetKind.Material: return MaterialTarget;
+                case UIAnimationTargetKind.GameObject: return ActiveTarget;
+                case UIAnimationTargetKind.Audio: return AudioSourceTarget;
+                default: return RectTarget;
+            }
+        }
+
+        /// <summary>
+        /// The quiet half of ResolveHost: the owner when no path is authored, the object at the path
+        /// when it matches, null when it does not. Public so the scene-view path editor resolves a
+        /// step's target by exactly the rules playback uses, without the warning - it runs every
+        /// repaint.
+        /// </summary>
+        public static GameObject FindHost(GameObject owner, string targetPath)
+        {
+            if (owner == null) return null;
+            if (string.IsNullOrEmpty(targetPath)) return owner;
+
+            // Transform.Find takes a slash-separated path and does find inactive children, which
+            // matters for a SetActive step whose whole job is to switch a hidden one back on.
+            Transform found = owner.transform.Find(targetPath);
+            return found != null ? found.gameObject : null;
         }
 
         /// <summary>GetComponent that tolerates the null host a missed TargetPath produces.</summary>
@@ -467,9 +598,16 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         public void CaptureBaseline()
         {
+            baselineType = Type;
+
             switch (Type)
             {
+                // Punch and shake never read their baseline - they are relative to wherever they
+                // start - but capturing it is what lets the edit-mode preview put back one that was
+                // stopped half way through an oscillation.
                 case UIAnimationStepType.AnchoredPosition:
+                case UIAnimationStepType.PunchAnchoredPosition:
+                case UIAnimationStepType.ShakeAnchoredPosition:
                     if (rect != null) baselineVector = rect.anchoredPosition;
                     break;
 
@@ -478,10 +616,14 @@ namespace rmf_claude.DOTweenUI
                     break;
 
                 case UIAnimationStepType.Scale:
+                case UIAnimationStepType.PunchScale:
+                case UIAnimationStepType.ShakeScale:
                     if (rect != null) baselineVector = rect.localScale;
                     break;
 
                 case UIAnimationStepType.Rotation:
+                case UIAnimationStepType.PunchRotation:
+                case UIAnimationStepType.ShakeRotation:
                     if (rect != null) baselineVector = rect.localEulerAngles;
                     break;
 
@@ -535,14 +677,19 @@ namespace rmf_claude.DOTweenUI
         /// blanket EditorJsonUtility round-trip of the component: that would also rewrite object
         /// reference fields (an Image's sprite and material) and blank them.
         ///
-        /// Steps with nothing to restore - PlaySound, and punch/shake, which already end where
-        /// they began - do nothing here.
+        /// Switches on the Type the baseline was captured under rather than the current one, so a
+        /// Type changed in the Inspector mid-preview puts back the property that was really read
+        /// instead of writing a scale into a position. PlaySound has nothing to restore.
         /// </summary>
         public void RestoreBaseline()
         {
-            switch (Type)
+            switch (baselineType)
             {
+                // Punch and shake end where they began when they run to the end, but not when a
+                // preview is stopped half way through one.
                 case UIAnimationStepType.AnchoredPosition:
+                case UIAnimationStepType.PunchAnchoredPosition:
+                case UIAnimationStepType.ShakeAnchoredPosition:
                     if (rect != null) rect.anchoredPosition = baselineVector;
                     break;
 
@@ -551,10 +698,14 @@ namespace rmf_claude.DOTweenUI
                     break;
 
                 case UIAnimationStepType.Scale:
+                case UIAnimationStepType.PunchScale:
+                case UIAnimationStepType.ShakeScale:
                     if (rect != null) rect.localScale = baselineVector;
                     break;
 
                 case UIAnimationStepType.Rotation:
+                case UIAnimationStepType.PunchRotation:
+                case UIAnimationStepType.ShakeRotation:
                     if (rect != null) rect.localEulerAngles = baselineVector;
                     break;
 
@@ -595,14 +746,78 @@ namespace rmf_claude.DOTweenUI
                     if (HasMaterial()) materialInstance.Material.SetColor(shaderPropertyId, baselineColor);
                     break;
 
-                // Punch and shake move a RectTransform and are excluded on purpose: they return to
-                // their own start value, and the property they drive is already covered by whichever
-                // ordinary step authored it.
                 case UIAnimationStepType.SetActive:
                     if (activeObject != null) activeObject.SetActive(baselineActive);
                     break;
             }
         }
+
+    #if UNITY_EDITOR
+        /// <summary>
+        /// Records where this step's property stands right now, for the edit-mode preview. Reuses
+        /// CaptureBaseline's own switch with the baseline swapped out of the way for the duration.
+        /// </summary>
+        public void EditorCaptureSnapshot()
+        {
+            SwapSnapshot();
+            CaptureBaseline();
+            SwapSnapshot();
+
+            snapshotTarget = ResolvedObject(snapshotType);
+            hasSnapshot = true;
+        }
+
+        /// <summary>
+        /// Writes back what EditorCaptureSnapshot recorded. Skipped when the step now resolves to a
+        /// different object than it did then - a target changed in the Inspector mid-preview - so
+        /// one object's value is never written onto another.
+        /// </summary>
+        public void EditorRestoreSnapshot()
+        {
+            if (!hasSnapshot || ResolvedObject(snapshotType) != snapshotTarget) return;
+
+            SwapSnapshot();
+            RestoreBaseline();
+            SwapSnapshot();
+        }
+
+        private void SwapSnapshot()
+        {
+            Vector3 vector = baselineVector;
+            baselineVector = snapshotVector;
+            snapshotVector = vector;
+
+            float single = baselineFloat;
+            baselineFloat = snapshotFloat;
+            snapshotFloat = single;
+
+            Color color = baselineColor;
+            baselineColor = snapshotColor;
+            snapshotColor = color;
+
+            bool active = baselineActive;
+            baselineActive = snapshotActive;
+            snapshotActive = active;
+
+            UIAnimationStepType type = baselineType;
+            baselineType = snapshotType;
+            snapshotType = type;
+        }
+
+        /// <summary>The resolved object a step of this type writes to, including a material's owner.</summary>
+        private UnityEngine.Object ResolvedObject(UIAnimationStepType type)
+        {
+            switch (TargetKindOf(type))
+            {
+                case UIAnimationTargetKind.CanvasGroup: return canvasGroup;
+                case UIAnimationTargetKind.Graphic: return graphic;
+                case UIAnimationTargetKind.Material: return materialInstance;
+                case UIAnimationTargetKind.GameObject: return activeObject;
+                case UIAnimationTargetKind.Audio: return audioSource;
+                default: return rect;
+            }
+        }
+    #endif
 
         /// <summary>
         /// The Unity object this step writes to, or null for steps that write to none.
@@ -698,21 +913,30 @@ namespace rmf_claude.DOTweenUI
         /// timelineOffset is where it sits in the sequence, so every step shares one frame grid.
         /// The frame rate arrives per step deliberately - a per-step override would only need the
         /// player to resolve a different number, not any new plumbing here.
+        ///
+        /// snapAll is the animation's own Snapping. It adds to this step's box rather than replacing
+        /// it, so a step authored with Snapping ticked before the animation had one still snaps.
         /// </summary>
-        public Tween BuildTween(bool applyFromImmediately, float frameRate, float timelineOffset, string context)
+        public Tween BuildTween(bool applyFromImmediately, float frameRate, float timelineOffset, bool snapAll, string context)
         {
             if (IsInstant(Type)) return null;
             if (!HasTarget(context)) return null;
 
             bool useFrom = HasAuthoredStart;
             bool relative = IsRelative;
+            bool snap = Snapping || snapAll;
             Tween tween;
 
-            switch (Type)
+            if (HasPath)
+            {
+                tween = BuildPathTween(applyFromImmediately, snap);
+                if (tween == null) return null;
+            }
+            else switch (Type)
             {
                 case UIAnimationStepType.AnchoredPosition:
                 {
-                    var t = rect.DOAnchorPos(ResolveVector(ToMode, ToVector), Duration, Snapping);
+                    var t = rect.DOAnchorPos(ResolveVector(ToMode, ToVector), Duration, snap);
                     if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
@@ -721,7 +945,7 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.LocalPosition:
                 {
-                    var t = rect.DOLocalMove(ResolveVector(ToMode, ToVector), Duration, Snapping);
+                    var t = rect.DOLocalMove(ResolveVector(ToMode, ToVector), Duration, snap);
                     if (useFrom) t.From(ResolveVector(FromMode, FromVector), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
@@ -748,7 +972,7 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.SizeDelta:
                 {
-                    var t = rect.DOSizeDelta(ResolveVector(ToMode, ToVector), Duration, Snapping);
+                    var t = rect.DOSizeDelta(ResolveVector(ToMode, ToVector), Duration, snap);
                     if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
@@ -762,7 +986,7 @@ namespace rmf_claude.DOTweenUI
                     RectTransform target = rect;
                     var t = DOTween.To(() => target.offsetMin, v => target.offsetMin = v,
                                        (Vector2)ResolveVector(ToMode, ToVector), Duration);
-                    t.SetOptions(Snapping);
+                    t.SetOptions(snap);
                     if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
@@ -774,7 +998,7 @@ namespace rmf_claude.DOTweenUI
                     RectTransform target = rect;
                     var t = DOTween.To(() => target.offsetMax, v => target.offsetMax = v,
                                        (Vector2)ResolveVector(ToMode, ToVector), Duration);
-                    t.SetOptions(Snapping);
+                    t.SetOptions(snap);
                     if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
@@ -831,11 +1055,26 @@ namespace rmf_claude.DOTweenUI
                     break;
 
                 case UIAnimationStepType.PunchAnchoredPosition:
-                    tween = rect.DOPunchAnchorPos(ToVector, Duration, Vibrato, Elasticity, Snapping);
+                    tween = rect.DOPunchAnchorPos(ToVector, Duration, Vibrato, Elasticity, snap);
+                    break;
+
+                case UIAnimationStepType.PunchRotation:
+                    tween = rect.DOPunchRotation(ToVector, Duration, Vibrato, Elasticity);
                     break;
 
                 case UIAnimationStepType.ShakeAnchoredPosition:
-                    tween = rect.DOShakeAnchorPos(Duration, ToFloat, Vibrato, Randomness, Snapping);
+                    tween = rect.DOShakeAnchorPos(Duration, ToFloat, Vibrato, Randomness, snap);
+                    break;
+
+                // The rotation and scale shakes take a per-axis strength rather than ShakeAnchoredPosition's
+                // single number. A single number shakes all three axes, and on a UI element rotating
+                // around X or Y reads as the element tipping over in 3D - Z alone is the usual shake.
+                case UIAnimationStepType.ShakeRotation:
+                    tween = rect.DOShakeRotation(Duration, ToVector, Vibrato, Randomness);
+                    break;
+
+                case UIAnimationStepType.ShakeScale:
+                    tween = rect.DOShakeScale(Duration, ToVector, Vibrato, Randomness);
                     break;
 
                 default:
@@ -864,6 +1103,179 @@ namespace rmf_claude.DOTweenUI
             }
 
             return tween;
+        }
+
+        /// <summary>
+        /// True for the step types a movement path can drive: every vector step except Rotation,
+        /// which DOTween rotates as a quaternion rather than through the Euler values a path would
+        /// pass through, and punch/shake, which have no endpoint to travel to.
+        /// </summary>
+        public static bool SupportsPath(UIAnimationStepType type)
+        {
+            switch (type)
+            {
+                case UIAnimationStepType.AnchoredPosition:
+                case UIAnimationStepType.LocalPosition:
+                case UIAnimationStepType.Scale:
+                case UIAnimationStepType.SizeDelta:
+                case UIAnimationStepType.OffsetMin:
+                case UIAnimationStepType.OffsetMax:
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>True for vector steps whose Z is unused - the rect views, which are Vector2.</summary>
+        public static bool IsTwoDimensional(UIAnimationStepType type)
+        {
+            return type == UIAnimationStepType.AnchoredPosition
+                || type == UIAnimationStepType.PunchAnchoredPosition
+                || type == UIAnimationStepType.SizeDelta
+                || type == UIAnimationStepType.OffsetMin
+                || type == UIAnimationStepType.OffsetMax;
+        }
+
+        /// <summary>
+        /// True when this step travels along its authored path. A path with no points is a straight
+        /// line, which the ordinary tween already is, so an empty list falls back to that - the step
+        /// then behaves exactly as it would with the box unticked.
+        /// </summary>
+        public bool HasPath
+        {
+            get { return UseCustomPath && SupportsPath(Type) && Waypoints != null && Waypoints.Count > 0; }
+        }
+
+        /// <summary>
+        /// Builds the path version of a vector step: start, then each waypoint, then To.
+        ///
+        /// DOTween has path shortcuts only for Transform.position/localPosition, so this uses the
+        /// generic PathPlugin with a getter and setter - the same call DOTween's own Rigidbody module
+        /// makes - which is what lets one path drive anchoredPosition, sizeDelta or anything else.
+        ///
+        /// Three things about the path plugin that this works around, all measured against DOTween
+        /// 1.3.030:
+        ///   - It needs a Transform as the tween's target and throws a NullReferenceException at
+        ///     startup without one, so SetTarget is not optional here.
+        ///   - It ignores From(). The start is whatever the getter returns at startup, so an
+        ///     authored FROM is supplied by having the getter return it, and the setter writes it on
+        ///     the first update like any other From.
+        ///   - It prepends the start as the first point unless the first waypoint already equals it,
+        ///     so the waypoint list never includes the start itself.
+        ///
+        /// SetRelative works as it does on every other step: every point, To included, is offset by
+        /// the value at startup. That is why waypoints follow To's mode rather than having their own.
+        /// </summary>
+        private Tween BuildPathTween(bool applyFromImmediately, bool snap)
+        {
+            RectTransform target = rect;
+            DOGetter<Vector3> read;
+            DOSetter<Vector3> write;
+
+            switch (Type)
+            {
+                case UIAnimationStepType.AnchoredPosition:
+                    read = () => target.anchoredPosition;
+                    write = v => target.anchoredPosition = v;
+                    break;
+
+                case UIAnimationStepType.LocalPosition:
+                    read = () => target.localPosition;
+                    write = v => target.localPosition = v;
+                    break;
+
+                case UIAnimationStepType.Scale:
+                    read = () => target.localScale;
+                    write = v => target.localScale = v;
+                    break;
+
+                case UIAnimationStepType.SizeDelta:
+                    read = () => target.sizeDelta;
+                    write = v => target.sizeDelta = v;
+                    break;
+
+                case UIAnimationStepType.OffsetMin:
+                    read = () => target.offsetMin;
+                    write = v => target.offsetMin = v;
+                    break;
+
+                case UIAnimationStepType.OffsetMax:
+                    read = () => target.offsetMax;
+                    write = v => target.offsetMax = v;
+                    break;
+
+                default:
+                    return null;
+            }
+
+            // DOTween's own shortcuts round inside the plugin; the path plugin has no snapping
+            // option, so it happens on the way out instead. Scale never offered Snapping.
+            if (snap && Type != UIAnimationStepType.Scale)
+            {
+                DOSetter<Vector3> unsnapped = write;
+                write = v => unsnapped(new Vector3(Mathf.Round(v.x), Mathf.Round(v.y), Mathf.Round(v.z)));
+            }
+
+            if (HasAuthoredStart)
+            {
+                Vector3 from = Flatten(ResolveVector(FromMode, FromVector));
+                read = () => from;
+
+                // The same thing From(value, setImmediately: true) does on every other step.
+                if (applyFromImmediately) write(from);
+            }
+
+            Vector3[] points = PathPoints();
+            PathType shape = PathShape == UIAnimationPathShape.Linear ? PathType.Linear : PathType.CatmullRom;
+
+            // Transparent gizmo: DOTween draws a running path in the Scene view at the raw point
+            // values, which for anchoredPosition or sizeDelta are not world positions and would
+            // draw a misleading line somewhere unrelated. The path editor draws the real one.
+            var path = new DG.Tweening.Plugins.Core.PathCore.Path(shape, points, PathResolution, Color.clear);
+
+            var tween = DOTween.To(PathPlugin.Get(), read, write, path, Duration);
+            tween.SetTarget(target);
+            if (IsRelative) tween.SetRelative(true);
+
+            return tween;
+        }
+
+        /// <summary>
+        /// Subdivisions per segment for a curved path. DOTween's default; 5 is usually enough and
+        /// UI paths are short, but there are never enough path steps for this to cost anything.
+        /// </summary>
+        private const int PathResolution = 10;
+
+        /// <summary>
+        /// The waypoints then To, resolved against To's mode, with Z dropped on the rect views and
+        /// consecutive duplicates removed. A duplicate point makes a zero-length segment, and a
+        /// waypoint added from the inspector starts on top of its neighbour until it is moved.
+        /// </summary>
+        private Vector3[] PathPoints()
+        {
+            var points = new List<Vector3>(Waypoints.Count + 1);
+
+            for (int i = 0; i <= Waypoints.Count; i++)
+            {
+                Vector3 raw = i < Waypoints.Count ? Waypoints[i] : ToVector;
+                Vector3 point = Flatten(ResolveVector(ToMode, raw));
+
+                if (points.Count > 0 && points[points.Count - 1] == point) continue;
+                points.Add(point);
+            }
+
+            return points.ToArray();
+        }
+
+        /// <summary>
+        /// Zeroes Z on the rect views. The inspector edits them as X/Y, so a Z left behind by an
+        /// earlier Type would otherwise bend a path through a dimension that is then thrown away.
+        /// </summary>
+        private Vector3 Flatten(Vector3 value)
+        {
+            if (IsTwoDimensional(Type)) value.z = 0f;
+            return value;
         }
 
         /// <summary>

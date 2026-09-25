@@ -31,6 +31,18 @@ namespace rmf_claude.DOTweenUI
     {
         private static readonly List<string> names = new List<string>();
 
+        // What OnSceneGUI needs, read outside it. Unity logs an error on every call if OnSceneGUI
+        // touches targets or serializedObject, since those span the whole selection while OnSceneGUI
+        // runs once per target - and it runs on every Scene view repaint. The gizmos only draw for a
+        // single selection, and they need THIS editor's serializedObject rather than a new one, because
+        // that is where the Inspector keeps which animations and steps are expanded.
+        private SerializedObject sceneSerialized;
+
+        private void OnEnable()
+        {
+            sceneSerialized = targets.Length == 1 ? serializedObject : null;
+        }
+
         private void OnDisable()
         {
             // Selecting something else abandons the preview, so put the scene back first.
@@ -43,81 +55,63 @@ namespace rmf_claude.DOTweenUI
 
             if (targets.Length > 1) return;
 
+            sceneSerialized = serializedObject;
+
             var player = (UIAnimationPlayer)target;
+
+            NoteShadowedNames(player);
 
             EditorGUILayout.Space();
 
-            if (Application.isPlaying) DrawPlayModePreview(player);
-            else DrawEditModePreview(player);
-        }
-
-        private void DrawPlayModePreview(UIAnimationPlayer player)
-        {
-            EditorGUILayout.LabelField("Preview", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(
+                Application.isPlaying ? "Preview" : "Preview (edit mode)", EditorStyles.boldLabel);
 
             CollectNames(player);
 
             for (int i = 0; i < names.Count; i++)
             {
-                string animationName = names[i];
-
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(animationName, GUILayout.MinWidth(60f));
-
-                if (GUILayout.Button("Play", GUILayout.Width(44f))) player.Play(animationName);
-                if (GUILayout.Button("Start", GUILayout.Width(44f))) player.ApplyFromState(animationName);
-                if (GUILayout.Button("Stop", GUILayout.Width(44f))) player.Stop(animationName);
-
-                EditorGUILayout.EndHorizontal();
+                UIAnimationPreview.DrawRow(this, player, names[i]);
             }
 
-            if (GUILayout.Button("Stop All")) player.StopAll();
+            UIAnimationPreview.DrawFooter(player);
 
-            Repaint();
+            // Under the buttons rather than between the heading and them: it is read once, and the
+            // buttons are used every time.
+            if (!Application.isPlaying)
+            {
+                EditorGUILayout.HelpBox(
+                    "Edit-mode preview animates the real objects in your scene.\n\n" + UIAnimationPreview.EditModeNote,
+                    UIAnimationPreview.IsPreviewing(player) ? MessageType.Warning : MessageType.Info);
+
+                UIAnimationGizmos.DrawButton();
+            }
+
+            if (Application.isPlaying || UIAnimationPreview.IsPreviewing(player)) Repaint();
         }
 
-        private void DrawEditModePreview(UIAnimationPlayer player)
+        private void OnSceneGUI()
         {
-            EditorGUILayout.LabelField("Preview (edit mode)", EditorStyles.boldLabel);
+            if (sceneSerialized == null) return;
 
-            bool active = UIAnimationPreview.IsPreviewing(player);
+            UIAnimationGizmos.Draw(sceneSerialized, (UIAnimationPlayer)target);
+        }
+
+        /// <summary>
+        /// The player-side half of the shadowing warning the asset inspector gives. Local winning is
+        /// the override feature working, so this is information rather than a warning - but it is the
+        /// only place a player's own inspector says that the shared version of a name never plays here.
+        /// </summary>
+        private static void NoteShadowedNames(UIAnimationPlayer player)
+        {
+            if (player.EditorShared == null) return;
+
+            string list = UIAnimationAssetEditor.ShadowedNames(player.EditorShared, player);
+            if (list == null) return;
 
             EditorGUILayout.HelpBox(
-                "Edit-mode preview animates the real objects in your scene.\n\n" +
-                "Values are put back when the preview stops, and the whole thing is one Undo step " +
-                "(Ctrl+Z) if it goes wrong. Stop it before you save.\n\n" +
-                "Sound steps are skipped, and On Complete events do not fire, so nothing in the " +
-                "animation can run game code while you are not in play mode.",
-                active ? MessageType.Warning : MessageType.Info);
-
-            CollectNames(player);
-
-            for (int i = 0; i < names.Count; i++)
-            {
-                string animationName = names[i];
-
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(animationName, GUILayout.MinWidth(60f));
-
-                if (GUILayout.Button("Play", GUILayout.Width(44f)))
-                {
-                    UIAnimationPreview.Play(this, player, animationName, false);
-                }
-
-                if (GUILayout.Button("Start", GUILayout.Width(44f)))
-                {
-                    UIAnimationPreview.Play(this, player, animationName, true);
-                }
-
-                EditorGUILayout.EndHorizontal();
-            }
-
-            using (new EditorGUI.DisabledScope(!active))
-            {
-                if (GUILayout.Button("Stop and Restore")) UIAnimationPreview.End();
-            }
-
-            if (active) Repaint();
+                "Local animations override the ones of the same name in '" + player.EditorShared.name +
+                "': " + list + ". Only the local versions play on this player.",
+                MessageType.Info);
         }
 
         private static void CollectNames(UIAnimationPlayer player)

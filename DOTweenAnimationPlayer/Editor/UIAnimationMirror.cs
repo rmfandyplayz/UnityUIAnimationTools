@@ -44,8 +44,13 @@ namespace rmf_claude.DOTweenUI
             }
 
             var needsReview = new List<UIAnimationStep>();
+            var pathReview = new List<UIAnimationStep>();
+
             for (int i = 0; i < steps.Count; i++)
             {
+                // Asked before mirroring, because it is a question about the modes as authored.
+                if (PathSpaceChanges(steps[i])) pathReview.Add(steps[i]);
+
                 if (!MirrorStep(steps[i])) needsReview.Add(steps[i]);
             }
 
@@ -76,6 +81,7 @@ namespace rmf_claude.DOTweenUI
             }
 
             if (needsReview.Count > 0) Report(animation, needsReview, context);
+            if (pathReview.Count > 0) ReportPaths(animation, pathReview, context);
         }
 
         /// <summary>
@@ -107,9 +113,17 @@ namespace rmf_claude.DOTweenUI
             // the Out ease its Show was authored with. Endpoints and timing are what mirror; the
             // feel of the motion is a separate authored choice and stays put.
 
+            // A movement path mirrors by walking it backwards: its points reverse, and the endpoints
+            // swap below exactly as they do without one. Points follow To's mode, so each branch
+            // also has to leave them in the space of the To it produces.
+
             if (step.UseFrom)
             {
-                // Both ends are declared, so the mirror is exact: swap them.
+                // Both ends are declared, so the mirror is exact: swap them. The points only need
+                // reversing - PathSpaceChanges flags the case where the swap moves them to a
+                // different mode, which no amount of reordering can fix.
+                ReversePath(step, Vector3.zero);
+
                 Swap(ref step.FromMode, ref step.ToMode);
                 Swap(ref step.FromVector, ref step.ToVector);
                 Swap(ref step.FromFloat, ref step.ToFloat);
@@ -119,7 +133,11 @@ namespace rmf_claude.DOTweenUI
 
             if (step.ToMode == UIAnimationEndpointMode.Current)
             {
-                // A relative nudge mirrors exactly by negating the offset.
+                // A relative nudge mirrors exactly by negating the offset. Its points are offsets
+                // from the forward start S; the mirror starts at S + To instead, so each point is
+                // re-based by subtracting To before the order is reversed.
+                ReversePath(step, step.ToVector);
+
                 step.ToVector = -step.ToVector;
                 step.ToFloat = -step.ToFloat;
                 step.ToColor = Negate(step.ToColor);
@@ -129,6 +147,8 @@ namespace rmf_claude.DOTweenUI
             // No authored FROM. The one thing we do know is where the forward step ended, so the
             // mirror starts there; the resting value is the best available guess for where it
             // should land. Flagged, because that guess is the part worth checking.
+            ReversePath(step, Vector3.zero);
+
             step.UseFrom = true;
             step.FromMode = step.ToMode;
             step.FromVector = step.ToVector;
@@ -141,6 +161,44 @@ namespace rmf_claude.DOTweenUI
             step.ToColor = new Color(0f, 0f, 0f, 0f);
 
             return false;
+        }
+
+        /// <summary>
+        /// Reverses a step's movement path, re-basing each point by subtracting shift first.
+        /// Does nothing for a step with no points, or one whose type cannot follow a path - any
+        /// points left on those from an earlier Type are not read, so there is nothing to keep true.
+        ///
+        /// The UseCustomPath box is not consulted: unticked points are still authored data, and
+        /// mirroring them keeps them right for whenever the box is ticked again.
+        /// </summary>
+        private static void ReversePath(UIAnimationStep step, Vector3 shift)
+        {
+            List<Vector3> points = step.Waypoints;
+            if (points == null || points.Count == 0 || !UIAnimationStep.SupportsPath(step.Type)) return;
+
+            for (int i = 0; i < points.Count; i++)
+            {
+                points[i] -= shift;
+            }
+
+            points.Reverse();
+        }
+
+        /// <summary>
+        /// True when mirroring would leave a step's path points in a different mode than the one
+        /// they were authored in. Points follow To's mode, and the mirror changes To's mode in two
+        /// cases: swapping a From and To authored in different modes, and giving a step with no
+        /// From a To of Baseline when its old To was Absolute. Converting between the two needs the
+        /// resting value, which only exists at runtime, so these are reported rather than guessed.
+        /// </summary>
+        public static bool PathSpaceChanges(UIAnimationStep step)
+        {
+            if (step.Waypoints == null || step.Waypoints.Count == 0) return false;
+            if (!step.UseCustomPath || !UIAnimationStep.SupportsPath(step.Type)) return false;
+
+            if (step.UseFrom) return step.FromMode != step.ToMode;
+
+            return step.ToMode == UIAnimationEndpointMode.Absolute;
         }
 
         /// <summary>
@@ -191,7 +249,7 @@ namespace rmf_claude.DOTweenUI
 
             text.Append("Mirrored animation '").Append(animation.Name).Append("'. ");
             text.Append(needsReview.Count == 1 ? "1 step had" : needsReview.Count + " steps had");
-            text.Append(" Use From switched off, so there was no authored start to mirror onto. ");
+            text.Append(" no From (their FROM / TO button read TO), so there was no authored start to mirror onto. ");
             text.Append("Their To is now the resting value, which is the part worth checking: ");
 
             for (int i = 0; i < needsReview.Count; i++)
@@ -200,6 +258,26 @@ namespace rmf_claude.DOTweenUI
 
                 text.Append("step ").Append(animation.Steps.IndexOf(needsReview[i]));
                 text.Append(" (").Append(needsReview[i].Type).Append(")");
+            }
+
+            Debug.LogWarning(text.ToString(), context);
+        }
+
+        private static void ReportPaths(UIAnimation animation, List<UIAnimationStep> steps, Object context)
+        {
+            var text = new StringBuilder();
+
+            text.Append("Mirrored animation '").Append(animation.Name).Append("'. ");
+            text.Append(steps.Count == 1 ? "1 step has" : steps.Count + " steps have");
+            text.Append(" a movement path whose points follow a To mode the mirror changed, so they were " +
+                        "reversed but are now read in a different space (Absolute vs Baseline). Check them: ");
+
+            for (int i = 0; i < steps.Count; i++)
+            {
+                if (i > 0) text.Append(", ");
+
+                text.Append("step ").Append(animation.Steps.IndexOf(steps[i]));
+                text.Append(" (").Append(steps[i].Type).Append(")");
             }
 
             Debug.LogWarning(text.ToString(), context);
