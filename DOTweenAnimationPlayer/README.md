@@ -59,9 +59,11 @@ Each step's collapsed header reads like a timeline line: `AFTER   Logo (Scale)  
 | Punch & Shake | `PunchAnchoredPosition` · `PunchRotation` · `PunchScale` · `ShakeAnchoredPosition` · `ShakeRotation` · `ShakeScale` |
 | Color & Fade | `CanvasGroupAlpha` · `GraphicAlpha` · `GraphicColor` |
 | Material | `MaterialColor` · `MaterialFloat` |
-| Other | `PlaySound` · `SetActive` |
+| Other | `CustomProperty` · `PlaySound` · `SetActive` |
 
 `SetActive` and `PlaySound` are **instant** — they happen at a point in the timeline rather than over one, so they show a `Delay` but no `Duration` and no easing.
+
+`CustomProperty` tweens anything the others don't — any public float, int, Vector2, Vector3, Color or string on any component, picked from a dropdown. See [Custom Property](#custom-property).
 
 The position and size steps can also follow a curved or zig-zag route to `To` instead of a straight line — see [Movement paths](#movement-paths).
 
@@ -144,8 +146,11 @@ The Inspector checks every step against what it will actually drive, so a broken
 | `Target Path "Iconn" matches nothing` | A typo, or the object was renamed or moved |
 | `Shader 'UI/Default' has no property '_Nope'` | A material step's Shader Property isn't on that material |
 | `No Clip` | A Play Sound step with nothing to play |
+| `No Property picked` | A Custom Property step whose Property dropdown is still on None |
+| `'Score' has no TextMeshProUGUI` | A Custom Property step's component isn't on the object it points at |
+| `TextMeshProUGUI.text is a string, but this step was set up for a float` | The member changed type since it was picked — pick it again |
 
-Everything under the warning is **greyed out** until the step is fixed — Duration, Ease, From / To and the rest only matter once the step can reach what it drives. What fixes it stays editable: Type, Start, the target slot and Target Path above the warning, and a sound step's Clip or a material step's Shader Property below it. The one warning that greys nothing is a sound whose Target Path misses, because that still plays, on the shared audio source.
+Everything under the warning is **greyed out** until the step is fixed — Duration, Ease, From / To and the rest only matter once the step can reach what it drives. What fixes it stays editable: Type, Start, the target slot and Target Path above the warning, and a sound step's Clip, a material step's Shader Property or a Custom Property step's Property below it. The one warning that greys nothing is a sound whose Target Path misses, because that still plays, on the shared audio source.
 
 It follows playback's own rules exactly — the slot, then the Target Path, then the player's own object — so it checks the object at the end of a Target Path too, `..` included. In a shared set there's no scene to check against until you set **Preview On**; until then only the clip and shader-name checks run. A long warning wraps onto as many lines as it needs, so the whole message is always readable, at any Inspector width.
 
@@ -270,6 +275,8 @@ What it stores depends on the row's mode, so the step always ends up exactly whe
 
 `Absolute` works any time, but outside a preview the object stays wherever you dragged it. Rotation is read as the nearest angle to zero, so a turn to `-10` isn't copied as `350` and spun the long way round.
 
+On a [Custom Property](#custom-property) step the button copies `Absolute` only: the preview has no resting value for an arbitrary member to measure a `Baseline` or `Current` against.
+
 ---
 
 ## Movement paths
@@ -362,6 +369,76 @@ UIAnimationAudio.SetShared(myUISfxSource);
 
 ---
 
+## Custom Property
+
+For anything the other step types don't cover: a score counting up, dialogue typing itself out, an `Image`'s fill, a slider, a scroll position. It's `DOTween.To` on a member you pick from a dropdown, with everything a step normally has — FROM / TO, the three modes, Duration, Delay, Ease, Custom Curve, Play At Custom FPS, mirroring, copy/paste.
+
+```
+▼ AFTER   Score (TextMeshProUGUI.text as number)   1s   Out Quad
+    Type               Custom Property
+    Start              [AFTER PREVIOUS]
+    Game Object        Score
+    Target Path
+    Property           TextMeshProUGUI.text as number   ▾
+    Duration           1
+    Delay              0
+    Ease               Out Quad
+    FROM   [Absolute]  0
+    To     [Absolute]  1500
+    Format             N0
+```
+
+1. Set **Type** to `Custom Property`.
+2. Point it at a GameObject — the **Game Object** slot, a **Target Path**, or neither for the player's own object, exactly as every other step.
+3. Open **Property**. It lists every member of every component on that object that can be tweened, grouped by component the way a UnityEvent's dropdown is (`Image/float fillAmount`).
+4. Pick one, and From / To turn into that member's type.
+
+**What's listed:** public properties and fields that can be both read and written, and are a `float`, `int`, `Vector2`, `Vector3`, `Color` or `string`. Read-only, `[Obsolete]`, static and indexer members are left out, and so are the ones every component inherits (`name`, `tag`, `enabled`), which would otherwise turn up under every component. Your own scripts work the same way — a `public float Health { get; set; }` shows up under its component.
+
+### Text
+
+A `string` member is listed twice, once for each way it can move:
+
+| Entry | Does |
+|---|---|
+| `string text (typewriter)` | DOTween's own text tween — what `DOText` does. The characters of To replace those of From one at a time. Rich-text tags are never shown half-written |
+| `string text (as number)` | Counts a number from From to To and writes it into the text with **Format** — a score counter |
+
+**Format** is a .NET format string: `0` for whole numbers, `0.0` for one decimal place, `N0` for thousands separators (`1,500`), `00` for at least two digits. A step without a From (or with `To: Current`) counts on from the number the text already shows — as long as the text is *just* a number; `Score: 120` reads as 0. Put the label in a separate text object.
+
+`Baseline` on text means the resting text **plus** what you type, added onto the end — so `To: Baseline` with nothing typed is "whatever the text said at rest". `Current` isn't offered for text: "add this onto whatever it says" is not something a mirrored copy could take back off.
+
+**Typing out text set from code.** A step's values are authored, so it can't know a line of dialogue your script sets at runtime. Two ways round that:
+
+- `FROM [Absolute] ""` → `To [Baseline] ""` types out the resting text. Set the text, call `player.CaptureBaseline()` so that *is* the resting text, then play it. `CaptureBaseline` re-reads every step's resting value on that player, so don't call it while one of its animations is running.
+- Or pick `int maxVisibleCharacters` on the TextMeshPro and tween it from `0` to a number at least as long as your longest line. TMP lays the whole line out first, so words never jump to the next line mid-word — but the reveal speed then depends on the line length.
+
+### Values and modes
+
+| Member type | From / To | Notes |
+|---|---|---|
+| `float` | a number | |
+| `int` | a whole number | Rounded every frame, so a counter on an `int` ticks cleanly |
+| `Vector2` | X / Y | |
+| `Vector3` | X / Y / Z | |
+| `Color` | a colour | |
+| `string` (typewriter) | text | `Absolute` and `Baseline` only |
+| `string` (as number) | a number | Plus **Format** |
+
+`Absolute`, `Baseline` and `Current` mean what they mean everywhere else. `Baseline` is the member's value at `Awake`, and the preview restores every Custom Property to exactly what it held — a counted-number text goes back to its original text, not to the number re-formatted.
+
+### Things worth knowing
+
+- **The component is stored by type name and the member by name.** Rename either in code and the step warns once at startup and is skipped — the type check shows it in the Inspector before you get that far. A member that changes type is caught the same way. If the object has two components of the same type, the first one is used.
+- **The member's setter really runs** — that's the point — and it runs in the edit-mode preview too. Tweening `Slider.value` fires its `onValueChanged` every frame (in edit mode only listeners set to *Editor and Runtime* hear it). For a property of your own, that's your code running outside play mode, like any `[ExecuteAlways]` script.
+- **Getters aren't called by the Inspector** — the dropdown and the type check only look members up. The Use Current Value button reads one when you click it.
+- **Picking a property needs a scene object to list.** In a shared Animation Set, set **Preview On** first. Once picked, the step keeps everything it needs, so it draws and plays without one.
+- A property's getter and setter are bound once at `Awake`, so a tween calls them directly with no per-frame lookup. A public *field* goes through reflection each frame, which is slower but irrelevant at UI scale.
+- No Snapping (use an `int` member for whole numbers), no movement path, and the Scene-view gizmos don't draw it.
+- **IL2CPP builds with Managed Stripping above *Minimal*** can strip a property setter that nothing but this tool calls. If one goes missing in a build only, preserve it with a `link.xml`.
+
+---
+
 ## Copying animations and steps
 
 Right-click a header in the Inspector:
@@ -414,6 +491,7 @@ This rewrites the steps once, at author time — there is no runtime reverse mod
 | `SetActive` on | `SetActive` off |
 | Punch / shake | Unchanged — they already return to where they started |
 | `PlaySound` | Keeps its clip. If a hide needs a different sound, swap it afterwards |
+| `CustomProperty` text | Swapped like any other value. With no From, the mirror types from the forward `To` back to `Baseline` — the resting text |
 
 Everything outside the steps — `Loops`, `Loop Type`, `Play At Custom FPS`, `Interrupt Others`, `Notes`, `On Complete` — is carried across untouched.
 
@@ -511,7 +589,7 @@ With a player selected, the Scene view draws what its animations do:
 - **Position steps** — `AnchoredPosition` and `LocalPosition`, paths included — as a line from start to end with arrows showing which way the object travels: a ring where it starts, a dot where it ends.
 - **Size steps** — `SizeDelta`, `OffsetMin`, `OffsetMax` and `Scale` — as the element's outline at evenly spaced moments of the step, fading in from the first to the last.
 
-Rotation, colour, fades, material values, punch/shake, SetActive and sound aren't drawn. A step that goes nowhere isn't drawn either.
+Rotation, colour, fades, material values, punch/shake, SetActive, sound and Custom Property steps aren't drawn — a Custom Property that happens to drive a position is still just a number to the gizmos. A step that goes nowhere isn't drawn either.
 
 The **Scene Gizmos** button under the preview opens the settings:
 

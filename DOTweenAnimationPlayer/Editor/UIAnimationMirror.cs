@@ -128,6 +128,7 @@ namespace rmf_claude.DOTweenUI
                 Swap(ref step.FromVector, ref step.ToVector);
                 Swap(ref step.FromFloat, ref step.ToFloat);
                 Swap(ref step.FromColor, ref step.ToColor);
+                Swap(ref step.FromText, ref step.ToText);
                 return true;
             }
 
@@ -135,7 +136,8 @@ namespace rmf_claude.DOTweenUI
             {
                 // A relative nudge mirrors exactly by negating the offset. Its points are offsets
                 // from the forward start S; the mirror starts at S + To instead, so each point is
-                // re-based by subtracting To before the order is reversed.
+                // re-based by subtracting To before the order is reversed. Text has no negative - the
+                // drawer does not offer Current on a text step for that reason - so its To is left alone.
                 ReversePath(step, step.ToVector);
 
                 step.ToVector = -step.ToVector;
@@ -154,11 +156,13 @@ namespace rmf_claude.DOTweenUI
             step.FromVector = step.ToVector;
             step.FromFloat = step.ToFloat;
             step.FromColor = step.ToColor;
+            step.FromText = step.ToText;
 
             step.ToMode = UIAnimationEndpointMode.Baseline;
             step.ToVector = Vector3.zero;
             step.ToFloat = 0f;
             step.ToColor = new Color(0f, 0f, 0f, 0f);
+            step.ToText = string.Empty;
 
             return false;
         }

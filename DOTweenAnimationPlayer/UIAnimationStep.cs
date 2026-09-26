@@ -8,6 +8,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using DG.Tweening;
 using DG.Tweening.Core;
 using DG.Tweening.Plugins;
@@ -58,6 +59,7 @@ namespace rmf_claude.DOTweenUI
         PunchRotation = 17,
         ShakeRotation = 18,
         ShakeScale = 19,
+        CustomProperty = 20,
     }
 
     /// <summary>
@@ -109,6 +111,8 @@ namespace rmf_claude.DOTweenUI
         Float,
         Vector,
         Color,
+        Int,
+        Text,
     }
 
     /// <summary>Which target slot a step type needs. Drives the inspector drawer.</summary>
@@ -120,6 +124,7 @@ namespace rmf_claude.DOTweenUI
         Material,
         GameObject,
         Audio,
+        Property,
     }
 
     /// <summary>
@@ -156,6 +161,10 @@ namespace rmf_claude.DOTweenUI
         [Tooltip("Which AudioSource plays the clip. Leave empty to use an AudioSource on this GameObject, " +
                  "or - if there isn't one - a shared 2D source the framework creates on first use.")]
         public AudioSource AudioSourceTarget;
+
+        [Tooltip("The GameObject whose component the Property below is on. Leave empty to use the GameObject " +
+                 "this UIAnimationPlayer is on.")]
+        public GameObject PropertyTarget;
 
         [Tooltip("Optional path from the GameObject this player is on to the one to animate, e.g. \"Panel/Icon\".\n\n" +
                  "Only used when the slot above is empty - a direct reference always wins, and the path is " +
@@ -214,6 +223,12 @@ namespace rmf_claude.DOTweenUI
         [Tooltip("Target value for this step.")]
         public Color ToColor = Color.white;
 
+        [Tooltip("Starting value for this step.")]
+        public string FromText;
+
+        [Tooltip("Target value for this step.")]
+        public string ToText;
+
         [Tooltip("Shader property name to drive, e.g. _Progress. Must exist on the material's shader.")]
         public string ShaderProperty = "_Progress";
 
@@ -264,6 +279,21 @@ namespace rmf_claude.DOTweenUI
                  "offset from the resting value, Current = an offset from wherever the step starts.")]
         public List<Vector3> Waypoints = new List<Vector3>();
 
+        [Tooltip("The component a Custom Property step tweens a member of, by its full type name. Set by the " +
+                 "Property dropdown.")]
+        public string PropertyComponent;
+
+        [Tooltip("The property or field a Custom Property step tweens, by name. Set by the Property dropdown.")]
+        public string PropertyMember;
+
+        [Tooltip("What a Custom Property step tweens its member as. Set by the Property dropdown along with it.")]
+        public UIAnimationPropertyKind PropertyKind;
+
+        [Tooltip("How the number is written into the text, as a .NET format string:\n" +
+                 "0 = whole numbers, 0.0 = one decimal place, N0 = whole numbers with thousands separators, " +
+                 "00 = at least two digits.")]
+        public string NumberFormat = "0";
+
         // Runtime only. Never serialized, so authored data is never mutated by play mode.
         [NonSerialized] private RectTransform rect;
         [NonSerialized] private CanvasGroup canvasGroup;
@@ -271,11 +301,19 @@ namespace rmf_claude.DOTweenUI
         [NonSerialized] private UIMaterialInstance materialInstance;
         [NonSerialized] private GameObject activeObject;
         [NonSerialized] private AudioSource audioSource;
+        [NonSerialized] private GameObject propertyObject;
+        [NonSerialized] private UIAnimationMember resolvedMember;
 
         [NonSerialized] private Vector3 baselineVector;
         [NonSerialized] private float baselineFloat;
         [NonSerialized] private Color baselineColor;
         [NonSerialized] private bool baselineActive;
+        [NonSerialized] private string baselineText;
+
+        // The member a Custom Property baseline was read from, so RestoreBaseline writes back through
+        // the member that was actually read even if another has been picked in the Inspector since -
+        // the same reason baselineType exists.
+        [NonSerialized] private UIAnimationMember baselineMember;
 
         // The Type the baseline was captured under, so RestoreBaseline writes back the property that
         // was actually read even if Type has been changed in the Inspector since.
@@ -305,6 +343,8 @@ namespace rmf_claude.DOTweenUI
         [NonSerialized] private float snapshotFloat;
         [NonSerialized] private Color snapshotColor;
         [NonSerialized] private bool snapshotActive;
+        [NonSerialized] private string snapshotText;
+        [NonSerialized] private UIAnimationMember snapshotMember;
     #endif
 
         // Built on first use and reconfigured per build, so replaying a stepped animation does
@@ -368,8 +408,29 @@ namespace rmf_claude.DOTweenUI
                 case UIAnimationStepType.PlaySound:
                     return UIAnimationValueKind.None;
 
+                // Depends on the member it drives rather than on the type - ask the overload below with
+                // the step's PropertyKind.
+                case UIAnimationStepType.CustomProperty:
+                    return UIAnimationValueKind.None;
+
                 default:
                     return UIAnimationValueKind.Vector;
+            }
+        }
+
+        /// <summary>Which value fields a Custom Property step uses for the kind of member it drives.</summary>
+        public static UIAnimationValueKind ValueKindOf(UIAnimationPropertyKind kind)
+        {
+            switch (kind)
+            {
+                case UIAnimationPropertyKind.Int: return UIAnimationValueKind.Int;
+                case UIAnimationPropertyKind.Vector2:
+                case UIAnimationPropertyKind.Vector3: return UIAnimationValueKind.Vector;
+                case UIAnimationPropertyKind.Color: return UIAnimationValueKind.Color;
+                case UIAnimationPropertyKind.Text: return UIAnimationValueKind.Text;
+
+                // A counted number is a float on the way in, whatever it is written into.
+                default: return UIAnimationValueKind.Float;
             }
         }
 
@@ -393,6 +454,9 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.PlaySound:
                     return UIAnimationTargetKind.Audio;
+
+                case UIAnimationStepType.CustomProperty:
+                    return UIAnimationTargetKind.Property;
 
                 default:
                     return UIAnimationTargetKind.Rect;
@@ -491,6 +555,11 @@ namespace rmf_claude.DOTweenUI
                             "': a Play Sound step has no Clip assigned. It will be skipped.", owner);
                     }
                     break;
+
+                case UIAnimationTargetKind.Property:
+                    propertyObject = PropertyTarget != null ? PropertyTarget : host;
+                    ResolveProperty(owner);
+                    break;
             }
         }
 
@@ -536,6 +605,7 @@ namespace rmf_claude.DOTweenUI
                 case UIAnimationTargetKind.Material: return MaterialTarget;
                 case UIAnimationTargetKind.GameObject: return ActiveTarget;
                 case UIAnimationTargetKind.Audio: return AudioSourceTarget;
+                case UIAnimationTargetKind.Property: return PropertyTarget;
                 default: return RectTarget;
             }
         }
@@ -578,7 +648,8 @@ namespace rmf_claude.DOTweenUI
                 || GraphicTarget != null
                 || MaterialTarget != null
                 || ActiveTarget != null
-                || AudioSourceTarget != null;
+                || AudioSourceTarget != null
+                || PropertyTarget != null;
 
             if (!any) return false;
 
@@ -588,6 +659,7 @@ namespace rmf_claude.DOTweenUI
             MaterialTarget = null;
             ActiveTarget = null;
             AudioSourceTarget = null;
+            PropertyTarget = null;
 
             return true;
         }
@@ -661,6 +733,10 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.SetActive:
                     if (activeObject != null) baselineActive = activeObject.activeSelf;
+                    break;
+
+                case UIAnimationStepType.CustomProperty:
+                    CapturePropertyBaseline();
                     break;
             }
         }
@@ -749,6 +825,10 @@ namespace rmf_claude.DOTweenUI
                 case UIAnimationStepType.SetActive:
                     if (activeObject != null) activeObject.SetActive(baselineActive);
                     break;
+
+                case UIAnimationStepType.CustomProperty:
+                    RestorePropertyBaseline();
+                    break;
             }
         }
 
@@ -799,6 +879,14 @@ namespace rmf_claude.DOTweenUI
             baselineActive = snapshotActive;
             snapshotActive = active;
 
+            string text = baselineText;
+            baselineText = snapshotText;
+            snapshotText = text;
+
+            UIAnimationMember read = baselineMember;
+            baselineMember = snapshotMember;
+            snapshotMember = read;
+
             UIAnimationStepType type = baselineType;
             baselineType = snapshotType;
             snapshotType = type;
@@ -814,6 +902,7 @@ namespace rmf_claude.DOTweenUI
                 case UIAnimationTargetKind.Material: return materialInstance;
                 case UIAnimationTargetKind.GameObject: return activeObject;
                 case UIAnimationTargetKind.Audio: return audioSource;
+                case UIAnimationTargetKind.Property: return resolvedMember != null ? resolvedMember.Component : null;
                 default: return rect;
             }
         }
@@ -831,6 +920,7 @@ namespace rmf_claude.DOTweenUI
                 case UIAnimationTargetKind.CanvasGroup: return canvasGroup;
                 case UIAnimationTargetKind.Graphic: return graphic;
                 case UIAnimationTargetKind.GameObject: return activeObject;
+                case UIAnimationTargetKind.Property: return resolvedMember != null ? resolvedMember.Component : null;
 
                 // The material is a runtime clone owned by UIMaterialInstance, not a scene object,
                 // so there is nothing for Undo to record. RestoreBaseline still puts it back.
@@ -896,6 +986,10 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.MaterialColor:
                     if (HasMaterial()) materialInstance.Material.SetColor(shaderPropertyId, ResolveColor(FromMode, FromColor));
+                    break;
+
+                case UIAnimationStepType.CustomProperty:
+                    if (resolvedMember != null && resolvedMember.IsAlive) WritePropertyFrom(resolvedMember);
                     break;
             }
         }
@@ -1075,6 +1169,11 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.ShakeScale:
                     tween = rect.DOShakeScale(Duration, ToVector, Vibrato, Randomness);
+                    break;
+
+                case UIAnimationStepType.CustomProperty:
+                    tween = BuildPropertyTween(applyFromImmediately, useFrom, relative);
+                    if (tween == null) return null;
                     break;
 
                 default:
@@ -1278,6 +1377,279 @@ namespace rmf_claude.DOTweenUI
             return value;
         }
 
+        // ---------------------------------------------------------------- Custom Property
+
+        /// <summary>
+        /// Looks up the member a Custom Property step drives, once, and warns once if it cannot - the
+        /// same discipline as the shader property check. A missing object is left to the ordinary
+        /// warnings: a missed Target Path has already said so, and HasTarget reports an empty one.
+        /// </summary>
+        private void ResolveProperty(GameObject owner)
+        {
+            resolvedMember = null;
+            if (propertyObject == null) return;
+
+            Component component;
+            MemberInfo member;
+            string problem;
+
+            if (UIAnimationProperties.TryLocate(propertyObject, PropertyComponent, PropertyMember, PropertyKind,
+                    out component, out member, out problem))
+            {
+                resolvedMember = new UIAnimationMember(component, member, PropertyKind);
+                return;
+            }
+
+            Debug.LogWarning("UIAnimationPlayer on '" + owner.name + "', Custom Property step: " + problem, owner);
+        }
+
+        /// <summary>
+        /// Reads the member's resting value.
+        ///
+        /// A getter is arbitrary code, and Initialize captures every step of every animation in one
+        /// pass - so one that throws is caught here, reported once, and its step skipped, rather than
+        /// leaving every other animation on the player half initialised.
+        /// </summary>
+        private void CapturePropertyBaseline()
+        {
+            baselineMember = resolvedMember;
+            if (resolvedMember == null || !resolvedMember.IsAlive) return;
+
+            try
+            {
+                switch (resolvedMember.Kind)
+                {
+                    case UIAnimationPropertyKind.Float:
+                        baselineFloat = resolvedMember.Getter<float>()();
+                        break;
+
+                    case UIAnimationPropertyKind.Int:
+                        baselineFloat = resolvedMember.Getter<int>()();
+                        break;
+
+                    case UIAnimationPropertyKind.Vector2:
+                        baselineVector = resolvedMember.Getter<Vector2>()();
+                        break;
+
+                    case UIAnimationPropertyKind.Vector3:
+                        baselineVector = resolvedMember.Getter<Vector3>()();
+                        break;
+
+                    case UIAnimationPropertyKind.Color:
+                        baselineColor = resolvedMember.Getter<Color>()();
+                        break;
+
+                    // The text itself is what gets put back, so a counted number restores to exactly what
+                    // the text said rather than to the number written out again in NumberFormat.
+                    default:
+                        baselineText = resolvedMember.Getter<string>()();
+                        baselineFloat = UIAnimationProperties.ParseNumber(baselineText);
+                        break;
+                }
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning(
+                    "UIAnimationPlayer: reading " + UIAnimationProperties.Describe(PropertyComponent, PropertyMember, PropertyKind) +
+                    " threw " + exception.GetType().Name + " (" + exception.Message + "). The step will be skipped.",
+                    resolvedMember.Component);
+
+                resolvedMember = null;
+                baselineMember = null;
+            }
+        }
+
+        /// <summary>
+        /// Writes the captured resting value back through the member it was read from. Caught for the
+        /// same reason as the capture: the preview restores every step in one pass, and a setter that
+        /// throws must not leave the rest of the scene where the preview stopped.
+        /// </summary>
+        private void RestorePropertyBaseline()
+        {
+            UIAnimationMember member = baselineMember;
+            if (member == null || !member.IsAlive) return;
+
+            try
+            {
+                switch (member.Kind)
+                {
+                    case UIAnimationPropertyKind.Float:
+                        member.Setter<float>()(baselineFloat);
+                        break;
+
+                    case UIAnimationPropertyKind.Int:
+                        member.Setter<int>()(Mathf.RoundToInt(baselineFloat));
+                        break;
+
+                    case UIAnimationPropertyKind.Vector2:
+                        member.Setter<Vector2>()((Vector2)baselineVector);
+                        break;
+
+                    case UIAnimationPropertyKind.Vector3:
+                        member.Setter<Vector3>()(baselineVector);
+                        break;
+
+                    case UIAnimationPropertyKind.Color:
+                        member.Setter<Color>()(baselineColor);
+                        break;
+
+                    default:
+                        member.Setter<string>()(baselineText);
+                        break;
+                }
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("UIAnimationPlayer: putting back a Custom Property threw " + exception.GetType().Name +
+                                 " (" + exception.Message + ").", member.Component);
+            }
+        }
+
+        /// <summary>Writes the step's resolved FROM value through the member, for ApplyFromValue.</summary>
+        private void WritePropertyFrom(UIAnimationMember member)
+        {
+            switch (member.Kind)
+            {
+                case UIAnimationPropertyKind.Float:
+                    member.Setter<float>()(ResolveFloat(FromMode, FromFloat));
+                    break;
+
+                case UIAnimationPropertyKind.Int:
+                    member.Setter<int>()(Mathf.RoundToInt(ResolveFloat(FromMode, FromFloat)));
+                    break;
+
+                case UIAnimationPropertyKind.Vector2:
+                    member.Setter<Vector2>()((Vector2)ResolveVector(FromMode, FromVector));
+                    break;
+
+                case UIAnimationPropertyKind.Vector3:
+                    member.Setter<Vector3>()(ResolveVector(FromMode, FromVector));
+                    break;
+
+                case UIAnimationPropertyKind.Color:
+                    member.Setter<Color>()(ResolveColor(FromMode, FromColor));
+                    break;
+
+                case UIAnimationPropertyKind.Text:
+                    member.Setter<string>()(ResolveText(FromMode, FromText));
+                    break;
+
+                default:
+                    member.Setter<string>()(UIAnimationProperties.FormatNumber(ResolveFloat(FromMode, FromFloat), NumberFormat));
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// The Custom Property tween: DOTween.To on the member's own getter and setter, configured the
+        /// way every other step's tween is - From or relative, all before the caller inserts it.
+        ///
+        /// Text uses DOTween's string tween with rich text on, which is what DOText does: the characters
+        /// of To replace those of From one at a time, and a rich-text tag is never shown half written.
+        /// A counted number is a float tween whose getter reads the text as a number and whose setter
+        /// writes it back in NumberFormat, so a step without a From counts on from what the text shows.
+        /// </summary>
+        private Tween BuildPropertyTween(bool applyFromImmediately, bool useFrom, bool relative)
+        {
+            UIAnimationMember member = resolvedMember;
+            Tween tween;
+
+            switch (member.Kind)
+            {
+                case UIAnimationPropertyKind.Float:
+                {
+                    Func<float> read = member.Getter<float>();
+                    Action<float> write = member.Setter<float>();
+
+                    var t = DOTween.To(() => read(), v => write(v), ResolveFloat(ToMode, ToFloat), Duration);
+                    if (useFrom) t.From(ResolveFloat(FromMode, FromFloat), applyFromImmediately);
+                    else if (relative) t.SetRelative(true);
+                    tween = t;
+                    break;
+                }
+
+                case UIAnimationPropertyKind.Int:
+                {
+                    Func<int> read = member.Getter<int>();
+                    Action<int> write = member.Setter<int>();
+
+                    var t = DOTween.To(() => read(), v => write(v), Mathf.RoundToInt(ResolveFloat(ToMode, ToFloat)), Duration);
+                    if (useFrom) t.From(Mathf.RoundToInt(ResolveFloat(FromMode, FromFloat)), applyFromImmediately);
+                    else if (relative) t.SetRelative(true);
+                    tween = t;
+                    break;
+                }
+
+                case UIAnimationPropertyKind.Vector2:
+                {
+                    Func<Vector2> read = member.Getter<Vector2>();
+                    Action<Vector2> write = member.Setter<Vector2>();
+
+                    var t = DOTween.To(() => read(), v => write(v), (Vector2)ResolveVector(ToMode, ToVector), Duration);
+                    if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
+                    else if (relative) t.SetRelative(true);
+                    tween = t;
+                    break;
+                }
+
+                case UIAnimationPropertyKind.Vector3:
+                {
+                    Func<Vector3> read = member.Getter<Vector3>();
+                    Action<Vector3> write = member.Setter<Vector3>();
+
+                    var t = DOTween.To(() => read(), v => write(v), ResolveVector(ToMode, ToVector), Duration);
+                    if (useFrom) t.From(ResolveVector(FromMode, FromVector), applyFromImmediately);
+                    else if (relative) t.SetRelative(true);
+                    tween = t;
+                    break;
+                }
+
+                case UIAnimationPropertyKind.Color:
+                {
+                    Func<Color> read = member.Getter<Color>();
+                    Action<Color> write = member.Setter<Color>();
+
+                    var t = DOTween.To(() => read(), v => write(v), ResolveColor(ToMode, ToColor), Duration);
+                    if (useFrom) t.From(ResolveColor(FromMode, FromColor), applyFromImmediately);
+                    else if (relative) t.SetRelative(true);
+                    tween = t;
+                    break;
+                }
+
+                case UIAnimationPropertyKind.Text:
+                {
+                    Func<string> read = member.Getter<string>();
+                    Action<string> write = member.Setter<string>();
+
+                    var t = DOTween.To(() => read(), v => write(v), ResolveText(ToMode, ToText), Duration);
+                    t.SetOptions(true);
+                    if (useFrom) t.From(ResolveText(FromMode, FromText), applyFromImmediately);
+                    else if (relative) t.SetRelative(true);
+                    tween = t;
+                    break;
+                }
+
+                default:
+                {
+                    Func<string> read = member.Getter<string>();
+                    Action<string> write = member.Setter<string>();
+                    string format = NumberFormat;
+
+                    var t = DOTween.To(() => UIAnimationProperties.ParseNumber(read()),
+                                       v => write(UIAnimationProperties.FormatNumber(v, format)),
+                                       ResolveFloat(ToMode, ToFloat), Duration);
+                    if (useFrom) t.From(ResolveFloat(FromMode, FromFloat), applyFromImmediately);
+                    else if (relative) t.SetRelative(true);
+                    tween = t;
+                    break;
+                }
+            }
+
+            // The component, as a DOTween shortcut on it would have set.
+            tween.SetTarget(member.Component);
+            return tween;
+        }
+
         /// <summary>
         /// Fills in fields that are still at their zero value, because Unity does not run C# field
         /// initialisers when you press + on a serialized list - a fresh step arrives with Duration 0
@@ -1295,6 +1667,7 @@ namespace rmf_claude.DOTweenUI
             if (Curve == null || Curve.length == 0) Curve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
             if (Volume == 0f) Volume = 1f;
             if (Pitch == 0f) Pitch = 1f;
+            if (string.IsNullOrEmpty(NumberFormat)) NumberFormat = "0";
 
             // FromFloat/ToFloat and the colours are deliberately left alone - 0 and transparent
             // are legitimate authored values (fading to 0 is the whole point of a Hide).
@@ -1345,6 +1718,13 @@ namespace rmf_claude.DOTweenUI
         private Color ResolveColor(UIAnimationEndpointMode mode, Color value)
         {
             return mode == UIAnimationEndpointMode.Baseline ? baselineColor + value : value;
+        }
+
+        /// <summary>For text, the offset a Baseline adds to the resting value is text added onto the end of it.</summary>
+        private string ResolveText(UIAnimationEndpointMode mode, string value)
+        {
+            if (value == null) value = string.Empty;
+            return mode == UIAnimationEndpointMode.Baseline ? (baselineText ?? string.Empty) + value : value;
         }
 
         /// <summary>
@@ -1421,6 +1801,14 @@ namespace rmf_claude.DOTweenUI
                     // Never reached today - PlaySound is instant, so it never builds a tween.
                     // Returning true keeps a future change from producing a nonsense warning.
                     return true;
+
+                case UIAnimationTargetKind.Property:
+                    if (resolvedMember != null && resolvedMember.IsAlive) return true;
+
+                    // A missing component or member, or no property picked at all, was already reported
+                    // once, at Resolve time, naming what was missing. Do not warn about it again here.
+                    if (propertyObject != null) return false;
+                    break;
             }
 
             Debug.LogWarning(context + ": " + Type + " step has no " + TargetKindOf(Type) + " target and was skipped.");

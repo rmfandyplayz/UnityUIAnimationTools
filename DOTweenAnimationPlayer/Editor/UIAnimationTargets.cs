@@ -7,6 +7,7 @@
 // -----------------------------------------------------------------------------
 
 using System.Collections.Generic;
+using System.Reflection;
 using TMPro;
 using UnityEditor;
 using UnityEngine;
@@ -78,6 +79,7 @@ namespace rmf_claude.DOTweenUI
                 case UIAnimationTargetKind.Material: return step.MaterialTarget;
                 case UIAnimationTargetKind.GameObject: return step.ActiveTarget;
                 case UIAnimationTargetKind.Audio: return step.AudioSourceTarget;
+                case UIAnimationTargetKind.Property: return step.PropertyTarget;
                 default: return step.RectTarget;
             }
         }
@@ -90,8 +92,9 @@ namespace rmf_claude.DOTweenUI
         }
 
         /// <summary>
-        /// The object a step of this type drives - a component, or a GameObject for SetActive - and
-        /// null with a reason when there is none. A filled slot is taken as it is: its field type
+        /// The object a step of this type drives - a component, or a GameObject for SetActive and for a
+        /// Custom Property, whose component ProblemOf checks separately - and null with a reason when
+        /// there is none. A filled slot is taken as it is: its field type
         /// already guarantees the component. owner may be null (an asset with no preview player), in
         /// which case only a filled slot resolves and there is no problem to report.
         /// </summary>
@@ -118,6 +121,7 @@ namespace rmf_claude.DOTweenUI
             switch (UIAnimationStep.TargetKindOf(type))
             {
                 case UIAnimationTargetKind.GameObject:
+                case UIAnimationTargetKind.Property:
                     return host;
 
                 case UIAnimationTargetKind.Audio:
@@ -172,6 +176,8 @@ namespace rmf_claude.DOTweenUI
             Object target = Resolve(type, slot, path, owner != null ? owner.gameObject : null, out problem);
             if (problem != null) return problem;
 
+            if (UIAnimationStep.TargetKindOf(type) == UIAnimationTargetKind.Property) return PropertyProblemOf(step, target as GameObject);
+
             if (UIAnimationStep.TargetKindOf(type) != UIAnimationTargetKind.Material) return null;
 
             string property = step.FindPropertyRelative("ShaderProperty").stringValue;
@@ -184,6 +190,28 @@ namespace rmf_claude.DOTweenUI
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// What is wrong with a Custom Property step's pick on the object it resolved to: nothing picked,
+        /// a component or member that is not there, or a member whose type has changed since. With no
+        /// object to look on - an asset with no Preview On player - only the first can be checked.
+        /// Looks members up without reading them, since a getter is arbitrary code and this runs on
+        /// every repaint.
+        /// </summary>
+        public static string PropertyProblemOf(SerializedProperty step, GameObject host)
+        {
+            Component component;
+            MemberInfo member;
+            string problem;
+
+            UIAnimationProperties.TryLocate(host,
+                step.FindPropertyRelative("PropertyComponent").stringValue,
+                step.FindPropertyRelative("PropertyMember").stringValue,
+                (UIAnimationPropertyKind)step.FindPropertyRelative("PropertyKind").intValue,
+                out component, out member, out problem);
+
+            return problem;
         }
 
         /// <summary>
@@ -211,6 +239,7 @@ namespace rmf_claude.DOTweenUI
                 case UIAnimationTargetKind.Material: return "MaterialTarget";
                 case UIAnimationTargetKind.GameObject: return "ActiveTarget";
                 case UIAnimationTargetKind.Audio: return "AudioSourceTarget";
+                case UIAnimationTargetKind.Property: return "PropertyTarget";
                 default: return "RectTarget";
             }
         }
