@@ -7,6 +7,7 @@
 // -----------------------------------------------------------------------------
 
 using System.Collections.Generic;
+using System.Reflection;
 using DG.Tweening;
 using UnityEditor;
 using UnityEngine;
@@ -252,9 +253,9 @@ namespace rmf_claude.DOTweenUI
 
             // Everything that only matters once the step can reach what it drives is greyed out while
             // it cannot, so a dead step reads as dead rather than as a normal one with a warning on it.
-            // What fixes it stays live: Type, Start, the target and Target Path above, and the Clip or
-            // Shader Property below, which are drawn before the greyed part starts. DisabledScopes
-            // nest by AND-ing, so nothing inside one could be switched back on.
+            // What fixes it stays live: Type, Start, the target and Target Path above, and the Clip,
+            // Shader Property or Property below, which are drawn before the greyed part starts.
+            // DisabledScopes nest by AND-ing, so nothing inside one could be switched back on.
             if (stepType == UIAnimationStepType.SetActive)
             {
                 using (new EditorGUI.DisabledScope(inert))
@@ -284,6 +285,12 @@ namespace rmf_claude.DOTweenUI
             if (stepType == UIAnimationStepType.MaterialFloat || stepType == UIAnimationStepType.MaterialColor)
             {
                 Field(ref layout, property.FindPropertyRelative("ShaderProperty"));
+            }
+
+            if (stepType == UIAnimationStepType.CustomProperty)
+            {
+                Rect propertyRow = layout.Line();
+                if (layout.Draw) DrawPropertyPopup(propertyRow, property);
             }
 
             using (new EditorGUI.DisabledScope(inert))
@@ -326,8 +333,12 @@ namespace rmf_claude.DOTweenUI
             // From is one row, not two. "Current" on the TO side means DOTween relative, which is
             // contradictory with an explicit FROM value, so it is only offered when there is none.
             // On the FROM side it never meant anything useful - see DrawEndpoint.
-            UIAnimationValueKind kind = UIAnimationStep.ValueKindOf(stepType);
+            UIAnimationValueKind kind = ValueKindOf(property, stepType);
             SerializedProperty useFrom = property.FindPropertyRelative("UseFrom");
+
+            // Current on text would mean "add this onto the end of whatever it says", which a mirror
+            // cannot undo - there is no taking characters back off. Absolute and Baseline mirror exactly.
+            bool offersCurrent = kind != UIAnimationValueKind.Text;
 
             if (useFrom.boolValue)
             {
@@ -336,7 +347,13 @@ namespace rmf_claude.DOTweenUI
             }
             else
             {
-                DrawEndpoint(ref layout, property, "To", "ToMode", kind, stepType, true, useFrom);
+                DrawEndpoint(ref layout, property, "To", "ToMode", kind, stepType, offersCurrent, useFrom);
+            }
+
+            if (stepType == UIAnimationStepType.CustomProperty
+                && property.FindPropertyRelative("PropertyKind").intValue == (int)UIAnimationPropertyKind.NumberText)
+            {
+                Field(ref layout, property.FindPropertyRelative("NumberFormat"), "Format");
             }
 
             if (UIAnimationStep.SupportsPath(stepType)) DrawPath(ref layout, property, stepType);
@@ -576,6 +593,11 @@ namespace rmf_claude.DOTweenUI
                     label = "Audio Source";
                     break;
 
+                case UIAnimationTargetKind.Property:
+                    field = "PropertyTarget";
+                    label = "Game Object";
+                    break;
+
                 default:
                     field = "RectTarget";
                     label = "Rect Transform";
@@ -759,11 +781,16 @@ namespace rmf_claude.DOTweenUI
             bool legacyCurrent = isFrom && !mode.hasMultipleDifferentValues
                 && mode.intValue == (int)UIAnimationEndpointMode.Current;
 
-            DrawModePopup(modeRect, mode, allowCurrent || legacyCurrent, ModeTooltip(isFrom, allowCurrent, legacyCurrent));
+            DrawModePopup(modeRect, mode, allowCurrent || legacyCurrent,
+                ModeTooltip(isFrom, allowCurrent, legacyCurrent, kind == UIAnimationValueKind.Text));
 
             if (kind == UIAnimationValueKind.Vector)
             {
-                DrawVector(valueRect, value, UIAnimationStep.IsTwoDimensional(stepType));
+                DrawVector(valueRect, value, IsTwoDimensional(property, stepType));
+            }
+            else if (kind == UIAnimationValueKind.Int)
+            {
+                DrawInt(valueRect, value);
             }
             else
             {
@@ -771,6 +798,208 @@ namespace rmf_claude.DOTweenUI
             }
 
             DrawUseCurrent(useRect, property, stepType, mode, value, isFrom);
+        }
+
+        // ---------------------------------------------------------------- Custom Property
+
+        private const string PropertyTooltip =
+            "What this step tweens: any public property or field on the target's components that is a float, " +
+            "int, Vector2, Vector3, Color or string and can be both read and written. Listed by component, the " +
+            "way a UnityEvent lists them.\n\n" +
+            "A string can be tweened two ways. Typewriter is DOTween's own text tween: the characters of To " +
+            "replace those of From one at a time. As number counts from From to To and writes the number " +
+            "into the text in the Format below - a score counter.\n\n" +
+            "The list is built from the object the step points at. In a shared animation set that needs " +
+            "Preview On.";
+
+        /// <summary>
+        /// Which value fields a step uses - by its type, or for a Custom Property by the kind of member
+        /// its Property dropdown picked.
+        /// </summary>
+        private static UIAnimationValueKind ValueKindOf(SerializedProperty step, UIAnimationStepType type)
+        {
+            if (type != UIAnimationStepType.CustomProperty) return UIAnimationStep.ValueKindOf(type);
+
+            return UIAnimationStep.ValueKindOf((UIAnimationPropertyKind)step.FindPropertyRelative("PropertyKind").intValue);
+        }
+
+        /// <summary>True when a vector step's Z is unused: the rect views, and a Custom Property that is a Vector2.</summary>
+        private static bool IsTwoDimensional(SerializedProperty step, UIAnimationStepType type)
+        {
+            if (type != UIAnimationStepType.CustomProperty) return UIAnimationStep.IsTwoDimensional(type);
+
+            return step.FindPropertyRelative("PropertyKind").intValue == (int)UIAnimationPropertyKind.Vector2;
+        }
+
+        /// <summary>An int member's value. Kept in the float field, and edited as a whole number.</summary>
+        private static void DrawInt(Rect rect, SerializedProperty value)
+        {
+            EditorGUI.BeginProperty(rect, GUIContent.none, value);
+
+            EditorGUI.showMixedValue = value.hasMultipleDifferentValues;
+            EditorGUI.BeginChangeCheck();
+            int edited = EditorGUI.IntField(rect, Mathf.RoundToInt(value.floatValue));
+            if (EditorGUI.EndChangeCheck()) value.floatValue = edited;
+            EditorGUI.showMixedValue = false;
+
+            EditorGUI.EndProperty();
+        }
+
+        /// <summary>The header's name for a Custom Property: the member it drives, or the type while none is picked.</summary>
+        private static string PropertyLabel(SerializedProperty step)
+        {
+            string member = step.FindPropertyRelative("PropertyMember").stringValue;
+            if (string.IsNullOrEmpty(member)) return TypeName(UIAnimationStepType.CustomProperty);
+
+            return UIAnimationProperties.Describe(step.FindPropertyRelative("PropertyComponent").stringValue, member,
+                (UIAnimationPropertyKind)step.FindPropertyRelative("PropertyKind").intValue);
+        }
+
+        /// <summary>
+        /// The Property row: a dropdown of every member the step's object has that can be tweened, grouped
+        /// by component. Three stored fields underneath - the component's type, the member's name and
+        /// what it is tweened as - written together by the menu, through copies, since it calls back
+        /// after this repaint is gone.
+        ///
+        /// The list is built from the object itself, so it needs one: on an asset with no Preview On, or
+        /// with a Target Path that misses, the dropdown is disabled with the reason in its tooltip. What
+        /// was picked is still shown and still plays - the step stores everything it needs.
+        ///
+        /// The row belongs to whichever of the three a prefab instance overrides, the member otherwise,
+        /// so bold and Revert show on it like any other field.
+        /// </summary>
+        private static void DrawPropertyPopup(Rect rect, SerializedProperty step)
+        {
+            SerializedProperty component = step.FindPropertyRelative("PropertyComponent");
+            SerializedProperty member = step.FindPropertyRelative("PropertyMember");
+            SerializedProperty kind = step.FindPropertyRelative("PropertyKind");
+
+            SerializedProperty bound = component.prefabOverride ? component : kind.prefabOverride ? kind : member;
+
+            GUIContent label = EditorGUI.BeginProperty(rect, new GUIContent("Property", PropertyTooltip), bound);
+            Rect field = EditorGUI.PrefixLabel(rect, label);
+
+            bool mixed = component.hasMultipleDifferentValues || member.hasMultipleDifferentValues || kind.hasMultipleDifferentValues;
+
+            string shown = mixed ? MixedValue
+                : string.IsNullOrEmpty(member.stringValue) ? NoProperty
+                : UIAnimationProperties.Describe(component.stringValue, member.stringValue, (UIAnimationPropertyKind)kind.intValue);
+
+            string reason;
+            GameObject host = PropertyHostOf(step, out reason);
+
+            using (new EditorGUI.DisabledScope(host == null))
+            {
+                if (EditorGUI.DropdownButton(field, new GUIContent(shown, PropertyTooltip), FocusType.Keyboard, EditorStyles.popup))
+                {
+                    ShowPropertyMenu(field, host, component, member, kind, mixed);
+                }
+            }
+
+            EditorGUI.EndProperty();
+
+            // Over the button rather than on it, so the reason still shows while it is disabled.
+            if (host == null) GUI.Label(field, new GUIContent(string.Empty, reason), GUIStyle.none);
+        }
+
+        private const string NoProperty = "None";
+
+        /// <summary>
+        /// The object a Custom Property step's members are listed from - resolved by playback's rules,
+        /// the slot, then Target Path, then the player's own object - or null and why not.
+        /// </summary>
+        private static GameObject PropertyHostOf(SerializedProperty step, out string reason)
+        {
+            SerializedObject serialized = step.serializedObject;
+
+            if (serialized.isEditingMultipleObjects)
+            {
+                reason = "Select a single object to pick a property.";
+                return null;
+            }
+
+            UIAnimationPlayer owner = UIAnimationTargets.OwnerOf(serialized);
+
+            string problem;
+            var host = UIAnimationTargets.Resolve(UIAnimationStepType.CustomProperty,
+                step.FindPropertyRelative("PropertyTarget").objectReferenceValue,
+                step.FindPropertyRelative("TargetPath").stringValue,
+                owner != null ? owner.gameObject : null, out problem) as GameObject;
+
+            if (host != null)
+            {
+                reason = null;
+                return host;
+            }
+
+            reason = problem ?? "A shared animation set has no scene to list properties from. Set Preview On " +
+                                "below, and this lists the components of that player's objects.";
+            return null;
+        }
+
+        private static void ShowPropertyMenu(Rect field, GameObject host, SerializedProperty component,
+            SerializedProperty member, SerializedProperty kind, bool mixed)
+        {
+            var options = new List<UIAnimationPropertyOption>();
+            UIAnimationProperties.Collect(host, options);
+
+            SerializedProperty componentTarget = component.Copy();
+            SerializedProperty memberTarget = member.Copy();
+            SerializedProperty kindTarget = kind.Copy();
+
+            string currentComponent = component.stringValue;
+            string currentMember = member.stringValue;
+            int currentKind = kind.intValue;
+
+            var menu = new GenericMenu();
+
+            menu.AddItem(new GUIContent(NoProperty), !mixed && string.IsNullOrEmpty(currentMember),
+                () => SetPropertyPick(componentTarget, memberTarget, kindTarget, string.Empty, string.Empty, 0));
+            menu.AddSeparator(string.Empty);
+
+            if (options.Count == 0)
+            {
+                menu.AddDisabledItem(new GUIContent("'" + host.name + "' has nothing that can be tweened"));
+            }
+
+            for (int i = 0; i < options.Count; i++)
+            {
+                UIAnimationPropertyOption option = options[i];
+                string typeName = option.ComponentType.FullName;
+
+                bool on = !mixed && typeName == currentComponent && option.Member == currentMember
+                    && (int)option.Kind == currentKind;
+
+                menu.AddItem(new GUIContent(MenuPath(option)), on,
+                    () => SetPropertyPick(componentTarget, memberTarget, kindTarget, typeName, option.Member, (int)option.Kind));
+            }
+
+            menu.DropDown(field);
+        }
+
+        /// <summary>"TextMeshProUGUI/string text (typewriter)" - the component as a submenu, like UnityEvent's.</summary>
+        private static string MenuPath(UIAnimationPropertyOption option)
+        {
+            string path = option.ComponentType.Name + "/" + UIAnimationProperties.TypeLabel(option.Kind) + " " + option.Member;
+
+            switch (option.Kind)
+            {
+                case UIAnimationPropertyKind.Text: return path + " (typewriter)";
+                case UIAnimationPropertyKind.NumberText: return path + " (as number)";
+                default: return path;
+            }
+        }
+
+        private static void SetPropertyPick(SerializedProperty component, SerializedProperty member, SerializedProperty kind,
+            string componentType, string memberName, int kindValue)
+        {
+            component.serializedObject.Update();
+
+            component.stringValue = componentType;
+            member.stringValue = memberName;
+            kind.intValue = kindValue;
+
+            component.serializedObject.ApplyModifiedProperties();
         }
 
         // ---------------------------------------------------------------- Use Current
@@ -829,7 +1058,11 @@ namespace rmf_claude.DOTweenUI
 
             using (new EditorGUI.DisabledScope(!available))
             {
-                if (GUI.Button(rect, new GUIContent(icon), useStyle)) WriteReading(value, type, reading);
+                if (GUI.Button(rect, new GUIContent(icon), useStyle))
+                {
+                    if (type == UIAnimationStepType.CustomProperty) WritePropertyReading(step, value);
+                    else WriteReading(value, type, reading);
+                }
             }
 
             // Over the button rather than on it, so the reason still shows while it is disabled.
@@ -873,6 +1106,11 @@ namespace rmf_claude.DOTweenUI
             Object target = UIAnimationTargets.Resolve(type,
                 step.FindPropertyRelative(UIAnimationTargets.SlotField(type)).objectReferenceValue,
                 step.FindPropertyRelative("TargetPath").stringValue, owner.gameObject, out problem);
+
+            if (type == UIAnimationStepType.CustomProperty)
+            {
+                return CanReadProperty(step, target as GameObject, mode, problem, out reason);
+            }
 
             Vector4 live;
             if (target == null || !ReadLive(type, target, step, out live))
@@ -1029,6 +1267,110 @@ namespace rmf_claude.DOTweenUI
             return true;
         }
 
+        /// <summary>
+        /// Whether the button can copy a Custom Property - decided without reading it. A getter is
+        /// arbitrary code and this runs on every repaint, so the read waits for the click, in
+        /// WritePropertyReading. As it is only: the preview keeps no resting value for an arbitrary
+        /// member, so there is nothing to measure a Baseline or a Current offset against.
+        /// </summary>
+        private static bool CanReadProperty(SerializedProperty step, GameObject host, UIAnimationEndpointMode mode,
+            string targetProblem, out string reason)
+        {
+            if (host == null)
+            {
+                reason = targetProblem ?? "This step has nothing to read a value from.";
+                return false;
+            }
+
+            reason = UIAnimationTargets.PropertyProblemOf(step, host);
+            if (reason != null) return false;
+
+            // A Current To only means "an offset from the start" on a step with no From; with one,
+            // playback reads it as the number typed, exactly like Absolute.
+            bool relative = mode == UIAnimationEndpointMode.Current && !step.FindPropertyRelative("UseFrom").boolValue;
+
+            if (mode == UIAnimationEndpointMode.Baseline || relative)
+            {
+                reason = (relative ? "Current" : "Baseline") + " cannot be read back for this type of step. " +
+                         "Switch the dropdown to Absolute to copy the value as it is.";
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>The button's click on a Custom Property row: reads the member and writes it into the row.</summary>
+        private static void WritePropertyReading(SerializedProperty step, SerializedProperty value)
+        {
+            UIAnimationPlayer owner = UIAnimationTargets.OwnerOf(step.serializedObject);
+            if (owner == null) return;
+
+            string problem;
+            var host = UIAnimationTargets.Resolve(UIAnimationStepType.CustomProperty,
+                step.FindPropertyRelative("PropertyTarget").objectReferenceValue,
+                step.FindPropertyRelative("TargetPath").stringValue, owner.gameObject, out problem) as GameObject;
+
+            var kind = (UIAnimationPropertyKind)step.FindPropertyRelative("PropertyKind").intValue;
+            Component component;
+            MemberInfo member;
+
+            if (!UIAnimationProperties.TryLocate(host, step.FindPropertyRelative("PropertyComponent").stringValue,
+                    step.FindPropertyRelative("PropertyMember").stringValue, kind, out component, out member, out problem))
+            {
+                return;
+            }
+
+            object read;
+
+            try
+            {
+                read = UIAnimationProperties.Read(component, member);
+            }
+            catch (System.Exception exception)
+            {
+                // Reflection wraps whatever the getter threw.
+                System.Exception cause = exception.InnerException ?? exception;
+                Debug.LogWarning("Reading " + UIAnimationProperties.Describe(component.GetType().FullName, member.Name, kind) +
+                                 " threw " + cause.GetType().Name + " (" + cause.Message + ").", component);
+                return;
+            }
+
+            switch (kind)
+            {
+                case UIAnimationPropertyKind.Float:
+                    value.floatValue = (float)read;
+                    break;
+
+                case UIAnimationPropertyKind.Int:
+                    value.floatValue = (int)read;
+                    break;
+
+                case UIAnimationPropertyKind.Vector2:
+                {
+                    // Z is never shown for a Vector2, so it is left as it was rather than zeroed.
+                    var read2 = (Vector2)read;
+                    value.vector3Value = new Vector3(read2.x, read2.y, value.vector3Value.z);
+                    break;
+                }
+
+                case UIAnimationPropertyKind.Vector3:
+                    value.vector3Value = (Vector3)read;
+                    break;
+
+                case UIAnimationPropertyKind.Color:
+                    value.colorValue = (Color)read;
+                    break;
+
+                case UIAnimationPropertyKind.Text:
+                    value.stringValue = (string)read ?? string.Empty;
+                    break;
+
+                default:
+                    value.floatValue = UIAnimationProperties.ParseNumber((string)read);
+                    break;
+            }
+        }
+
         private static Vector4 WrapAngles(Vector4 angles)
         {
             return new Vector4(Mathf.DeltaAngle(0f, angles.x), Mathf.DeltaAngle(0f, angles.y), Mathf.DeltaAngle(0f, angles.z), 0f);
@@ -1070,9 +1412,12 @@ namespace rmf_claude.DOTweenUI
         /// What the options in one mode dropdown mean - only the options that dropdown actually offers,
         /// so the tooltip never describes a choice that is not in the list under it.
         /// </summary>
-        private static string ModeTooltip(bool isFrom, bool offersCurrent, bool legacyCurrent)
+        private static string ModeTooltip(bool isFrom, bool offersCurrent, bool legacyCurrent, bool isText)
         {
             string text = AbsoluteLine + "\n" + BaselineLine;
+
+            // Text has no arithmetic, so its offset is the one thing an offset can mean for it.
+            if (isText) text += " For text, the offset is added onto the end of the resting text.";
 
             if (isFrom)
             {
@@ -1089,6 +1434,12 @@ namespace rmf_claude.DOTweenUI
             if (offersCurrent)
             {
                 return text + "\nCurrent = where the property is when the step starts, plus the value as an offset.";
+            }
+
+            if (isText)
+            {
+                return text + "\n\nCurrent is not offered for text: adding onto the end of whatever it says when the " +
+                       "step starts is not something a mirrored copy could ever take back off.";
             }
 
             return text + "\n\nCurrent is only offered while the button reads TO: an offset from wherever the " +
@@ -1191,8 +1542,11 @@ namespace rmf_claude.DOTweenUI
 
             switch (kind)
             {
-                case UIAnimationValueKind.Float: return prefix + "Float";
+                // An int is kept in the float field and drawn as a whole number.
+                case UIAnimationValueKind.Float:
+                case UIAnimationValueKind.Int: return prefix + "Float";
                 case UIAnimationValueKind.Color: return prefix + "Color";
+                case UIAnimationValueKind.Text: return prefix + "Text";
                 default: return prefix + "Vector";
             }
         }
@@ -1506,8 +1860,9 @@ namespace rmf_claude.DOTweenUI
         {
             string prefix = start == UIAnimationStartMode.WithPrevious ? "WITH" : "AFTER";
 
-            // The same prettified names the dropdowns below it use, so the header matches them.
-            string typeName = TypeName(type);
+            // The same prettified names the dropdowns below it use, so the header matches them. A Custom
+            // Property names the member instead, which is what says what the row does.
+            string typeName = type == UIAnimationStepType.CustomProperty ? PropertyLabel(property) : TypeName(type);
 
             if (type == UIAnimationStepType.SetActive)
             {
