@@ -150,7 +150,7 @@ The Inspector checks every step against what it will actually drive, so a broken
 | `'Score' has no TextMeshProUGUI` | A Custom Property step's component isn't on the object it points at |
 | `TextMeshProUGUI.text is a string, but this step was set up for a float` | The member changed type since it was picked — pick it again |
 
-Everything under the warning is **greyed out** until the step is fixed — Duration, Ease, From / To and the rest only matter once the step can reach what it drives. What fixes it stays editable: Type, Start, the target slot and Target Path above the warning, and a sound step's Clip, a material step's Shader Property or a Custom Property step's Property below it. The one warning that greys nothing is a sound whose Target Path misses, because that still plays, on the shared audio source.
+Everything under the warning is **greyed out** until the step is fixed — Duration, Ease, From / To and the rest only matter once the step can reach what it drives. What fixes it stays editable: Start, Type, the target slot and Target Path above the warning, and a sound step's Clip, a material step's Shader Property or a Custom Property step's Property below it. The one warning that greys nothing is a sound whose Target Path misses, because that still plays, on the shared audio source.
 
 It follows playback's own rules exactly — the slot, then the Target Path, then the player's own object — so it checks the object at the end of a Target Path too, `..` included. In a shared set there's no scene to check against until you set **Preview On**; until then only the clip and shader-name checks run. A long warning wraps onto as many lines as it needs, so the whole message is always readable, at any Inspector width.
 
@@ -334,8 +334,8 @@ A **PlaySound** step fires a clip at its point in the timeline. Put one first in
 
 ```
 ▼ AFTER  ui_click (Play Sound)
-    Type               Play Sound
     Start              [AFTER PREVIOUS]
+    Type               Play Sound
     Audio Source       None            ← see below
     Clip               ui_click
     Volume             1
@@ -375,8 +375,8 @@ For anything the other step types don't cover: a score counting up, dialogue typ
 
 ```
 ▼ AFTER   Score (TextMeshProUGUI.text as number)   1s   Out Quad
-    Type               Custom Property
     Start              [AFTER PREVIOUS]
+    Type               Custom Property
     Game Object        Score
     Target Path
     Property           TextMeshProUGUI.text as number   ▾
@@ -408,7 +408,7 @@ A `string` member is listed twice, once for each way it can move:
 
 `Baseline` on text means the resting text **plus** what you type, added onto the end — so `To: Baseline` with nothing typed is "whatever the text said at rest". `Current` isn't offered for text: "add this onto whatever it says" is not something a mirrored copy could take back off.
 
-**Typing out text set from code.** A step's values are authored, so it can't know a line of dialogue your script sets at runtime. Two ways round that:
+**Counting to, or typing out, a value only known at runtime.** Hand it to the step from code with [`SetTo`](#setting-from-and-to-from-code) before playing — `anim.SetTo("CountUp", 0, score)` for a counter, `anim.SetTo("Say", 0, line)` for text typed out over `FROM [Absolute] ""`. For text, two other ways work too:
 
 - `FROM [Absolute] ""` → `To [Baseline] ""` types out the resting text. Set the text, call `player.CaptureBaseline()` so that *is* the resting text, then play it. `CaptureBaseline` re-reads every step's resting value on that player, so don't call it while one of its animations is running.
 - Or pick `int maxVisibleCharacters` on the TextMeshPro and tween it from `0` to a number at least as long as your longest line. TMP lays the whole line out first, so words never jump to the next line mid-word — but the reveal speed then depends on the line length.
@@ -447,7 +447,7 @@ Right-click a header in the Inspector:
 |---|---|
 | An **animation** header | `Copy Animation` · `Paste Animation (overwrite)` · `Paste Animation Above` · `Paste Animation Below` · `Mirror Animation` · `Duplicate as Mirrored` |
 | A **step** header | `Copy Step` · `Paste Step (overwrite)` · `Paste Step Above` · `Paste Step Below` · `Mirror Step` |
-| The **Animations** list | `Paste Animation (add to end)` · `Paste Animation Mirrored (add to end)` |
+| The **Animations** list | `Paste Animation (add to end)` · `Paste Animation Mirrored (add to end)` · on a player, `Save as Animation Set...` (see [Turning a player's animations into a set](#turning-a-players-animations-into-a-set)) |
 | The **Steps** list | `Paste Step (add to end)` · `Paste Step Mirrored (add to end)` |
 
 **Above / Below insert a new element** and shuffle the rest down, rather than overwriting the one you right-clicked — that's how you land a step in the middle of a list without adding a blank one at the end and dragging it up. The pasted `Start` mode comes across as copied, so pasting a `With Previous` step into a group is how you widen it.
@@ -529,6 +529,16 @@ UI Animation Player
 
 This is opt-in and it is not the default. Authoring straight onto the player is fewer clicks and is right for anything only one object does.
 
+### Turning a player's animations into a set
+
+Author on one button first, then **right-click its Animations list → `Save as Animation Set...`**. It asks where to save, then copies every animation on that player into a new set, and pings the set in the Project window. The player itself is left as it was: its own copies still win over the set's, so delete them once it uses the set.
+
+- **Direct target slots become Target Paths**, measured from the player: `..` to reach the button above an `Animations` child, `../Icon` for its icon, empty for the player's own object. Each is checked by resolving it back the way playback will, so the set drives exactly what the player did — on any player with the same layout. A slot can't simply be emptied, because an empty slot means the player's own object, and the set would quietly animate the wrong thing.
+- **A target it can't reach by name** — under another root object, or sharing its name with a sibling — gets its path from the scene root instead. That misses when played, so the step warns and does nothing rather than animating something else. The Console lists each one.
+- **On Complete listeners on scene objects are left out**, since a set can't hold them. Listeners on other assets stay.
+- **Where it saves:** the dialog starts in the folder you last saved a set to this session, or `Assets/ScriptableObjects` if there is one, or `Assets`. Once you've saved one, the menu also offers **`Save as Animation Set in '<folder>'`**, which saves straight there with a unique name and no dialog. That folder lasts until Unity closes; saving through the dialog somewhere else changes it.
+- **Saving over an existing set** replaces its animations but keeps the asset itself, so every Shared slot already pointing at it keeps working.
+
 ### What an asset can't hold
 
 **A ScriptableObject cannot reference a scene object.** So the direct target slots are disabled when you author inside a set, with the reason shown under them. Use **Target Path** for anything relative — a child, or `..` for the parent — or leave the slot empty for the player's own GameObject. Those are enough to write a genuinely reusable animation, and needing them is what keeps a shared animation honest about being shared.
@@ -563,7 +573,7 @@ The Inspector has **Play / Reset** buttons per animation, and they work **withou
 
 **Every `Play` starts from the animation's first frame**, exactly as `Reset` then `Play` would: each step with a From jumps to it at once. That matters for an animation with **Apply From Values Immediately** off — in play mode each of its delayed steps waits at its current value until the step begins, which played from rest makes a Close look broken, when in the game it only ever plays after its Open.
 
-Two things here are deliberately not how play mode behaves: that first-frame rule, and interruptions — in play mode `Interrupt Others` stops the running animation where it stands and the next one starts from there. Check either case in play mode if it matters.
+Two things here are deliberately not how play mode behaves: that first-frame rule, and interruptions. In play mode it depends on the buttons beside **Interrupt Others** (see [Interrupting](#interrupting)): `COMPLETE` finishes the running animation first, as the preview does, and `STOP` stops it where it stands, so the next one starts from there. Check either case in play mode if it matters.
 
 The info box under the buttons repeats the rules, and **Scene Gizmos** under it controls the Scene-view drawings — see [Scene gizmos](#scene-gizmos).
 
@@ -630,7 +640,7 @@ Sequence Play(string name);
 Sequence Play(string name, Action onComplete);
 Sequence Play(string name, Action<UIAnimationEndReason> onEnd);   // always fires, exactly once
 
-void Stop(string name, bool complete = false);
+void Stop(string name, bool complete = false);   // complete: finish it, as Interrupt Others' COMPLETE REPORT does
 void StopAll(bool complete = false);
 
 void PlayAnimation(string name);    // void wrappers, so UnityEvents can call them
@@ -642,7 +652,31 @@ bool Has(string name);
 
 void ApplyFromState(string name);   // snap to an animation's FROM values without playing
 void CaptureBaseline();             // re-capture resting values at runtime
+
+bool SetTo(string name, int step, float / Vector3 / Color / string value);    // a step's To, from code
+bool SetFrom(string name, int step, float / Vector3 / Color / string value);  // a step's From, from code
+void ClearOverrides(string name);   // back to the values authored in the Inspector
 ```
+
+### Setting From and To from code
+
+Some endpoints are only known at runtime — the score a counter counts up to, the text a label types out, the colour of whichever team won. Author the step as usual, then replace its value from code before playing:
+
+```csharp
+anim.SetTo("CountUp", 0, score);     // step 0 = the top step in the Inspector
+anim.Play("CountUp");
+
+anim.SetFrom("CountUp", 0, oldScore);
+anim.SetTo("CountUp", 0, newScore);
+anim.Play("CountUp");
+```
+
+- **Steps are numbered from 0**, top to bottom, as the Inspector lists them. Reordering the steps changes the numbers, so keep a step you set from code where it is.
+- **The value means what typing it into the step would.** The step's mode still applies: a `Baseline` To lands on the resting value *plus* this, an `Absolute` one on exactly this. For "count to this number" use `Absolute`.
+- **Pass the kind of value the step tweens**: a number for a fade, a material float, an `int` or `float` member or a counted number; a `Vector3` for a move, size, scale or rotation (a `Vector2` converts on its own); a `Color`; a `string` for typed text. Punch and shake take their strength as their To. Anything else — a colour for a move, a value for a `SetActive` or sound step — is ignored with a warning, and the call returns `false`.
+- **`SetFrom` needs the step's From turned on** (the button reads `FROM`). A step without one starts from wherever the value already is and has no From to replace, so that is refused with a warning too. Punch and shake have no From.
+- **It lasts** for every later `Play` of that animation, until `ClearOverrides(name)` puts the Inspector's values back. An animation already running keeps the value it started with; `ApplyFromState` uses a From set from code.
+- **Only this player changes.** Nothing is written into the Inspector data, and an animation from a shared set is this player's own copy, so other players using the same set are unaffected.
 
 ### Knowing how an animation ended
 
@@ -664,8 +698,8 @@ anim.Play("Hide", reason =>
 
 | `UIAnimationEndReason` | When |
 |---|---|
-| `Completed` | Ran to its natural end — or `Stop(name, complete: true)`, or an animation with nothing to play. The only reason that also fires `On Complete`. |
-| `Interrupted` | Another `Play` cut it short: the same animation restarting, or a different one with **Interrupt Others**. |
+| `Completed` | Ran to its natural end — or `Stop(name, complete: true)`, or an animation with nothing to play, or an animation interrupting it with **Interrupt Others** set to `COMPLETE` `REPORT`. The only reason that also fires `On Complete`. |
+| `Interrupted` | Another `Play` cut it short: the same animation restarting, or a different one with **Interrupt Others** — including `COMPLETE` `SILENT`, which leaves it at its end state without counting as a finish. |
 | `Stopped` | `Stop`, `StopAll`, or a kill issued from outside the player such as `DOTween.KillAll`. |
 | `Disabled` | The GameObject or the player component was disabled while it was running. |
 | `Destroyed` | The player was destroyed while an animation was still live. |
@@ -690,7 +724,7 @@ What a UI Animation Player offers in the dropdown:
 |---|---|
 | `PlayAnimation (string)` | Plays the animation you type in the box |
 | `StopAnimation (string)` | Stops it where it stands |
-| `StopAll (bool)` | Stops everything on this player. Tick the box to complete rather than cut |
+| `StopAll (bool)` | Stops everything on this player. Tick the box to finish each one instead, as `COMPLETE` `REPORT` does (see [Interrupting](#interrupting)) |
 | `ApplyFromState (string)` | Snaps to an animation's FROM values without playing |
 | `CaptureBaseline ()` | Re-captures resting values |
 
@@ -700,6 +734,7 @@ Chaining is safe even though the next animation's **Interrupt Others** tries to 
 
 - An animation whose `On Complete` plays **itself** restarts cleanly instead of recursing. That's a loop, though — `Loops -1` says it far better.
 - **`StopAnimation` never fires `On Complete`**, so stopping a chain stops it dead. Only a natural finish carries it on. That's the existing rule for interrupted animations, and it's what makes a chain interruptible at all.
+- **Interrupting a chain with `COMPLETE` `REPORT` fires the interrupted animation's `On Complete`**, which tries to start the next link. That link is stopped straight away, so the animation doing the interrupting still ends up the only one running — but the `On Complete` itself has run, whatever else it does. Use `SILENT` if it shouldn't.
 
 `ApplyFromState` is the clean way to start hidden without authoring a separate state:
 
@@ -715,12 +750,33 @@ In play mode the inspector shows **Play / Reset / Stop** buttons per animation s
 
 **Read this bit.**
 
-- `Play(name)` kills that animation's own running sequence, and — because **Interrupt Others** is on by default — every *other* animation on the same player too. So `Play("Show"); Play("Hide");` leaves only `Hide` running. Untick **Interrupt Others** for something that should layer on top, like a looping pulse.
-- **An interrupted animation never fires its callback.** Neither the `Action` nor the UnityEvent. If the callback fired, the animation genuinely finished. The `Action<UIAnimationEndReason>` overload is the exception and always fires — see [Knowing how an animation ended](#knowing-how-an-animation-ended).
+- `Play(name)` kills that animation's own running sequence, and — because **Interrupt Others** is on by default — ends every *other* animation on the same player too. So `Play("Show"); Play("Hide");` leaves only `Hide` running. Untick **Interrupt Others** for something that should layer on top, like a looping pulse. How the others end is up to the two buttons beside it — see [Interrupting](#interrupting).
+- **A stopped animation never fires its callback.** Neither the `Action` nor the UnityEvent. If the callback fired, the animation genuinely finished — which an animation interrupted with `COMPLETE` `REPORT` counts as. The `Action<UIAnimationEndReason>` overload always fires either way — see [Knowing how an animation ended](#knowing-how-an-animation-ended).
 - **Disabling the GameObject kills running animations** (`Kill On Disable`, on by default) — loops stop and callbacks do *not* fire. The next `Play` re-snaps its FROM values, so nothing ends up visually corrupted. Untick it to let animations run through a disable.
 - Sequences are linked to the GameObject with `KillOnDestroy` and also killed in `OnDestroy`, so destroying objects or changing scenes leaves no orphaned tweens.
 - **Use Unscaled Time** is on by default, so UI still animates while `Time.timeScale == 0`. Leave it on for pause menus.
 - Baselines are captured once at `Awake`, before anything animates. If you move an element deliberately at runtime and want `Baseline` endpoints to follow, call `CaptureBaseline()` — but not mid-animation.
+
+### Interrupting
+
+While **Interrupt Others** is ticked, two buttons beside it choose what happens to the animations it ends:
+
+```
+Interrupt Others    ✔  [COMPLETE] [REPORT]
+```
+
+| Button | Options |
+|---|---|
+| First | `STOP` — they stop where they stand, and this animation starts from wherever that is. `COMPLETE` — they jump to their end state first, so this one starts from where they were *heading*. Hover out halfway through a hover-in and the hover-out starts from the fully hovered state rather than from the middle |
+| Second | Only used with `COMPLETE`, and greyed out otherwise. `REPORT` — the completed animation counts as finished: its `On Complete` fires, `Play(name, Action)` callbacks fire, and `onEnd` hears `Completed`. `SILENT` — it only jumps to its end state: no `On Complete`, no `Action`, and `onEnd` hears `Interrupted` |
+
+- **The setting belongs to the animation doing the interrupting.** `Hover` set to `COMPLETE` completes whatever it interrupts, whatever that animation's own buttons say.
+- **Completing runs the `SetActive` steps still ahead, but not the sounds** — a jump to the end shouldn't fire every sound it skipped over at once.
+- **An endless loop (`Loops -1`) has no end**, so it stops where it stands either way, and reports `Interrupted`.
+- **Anything a reported `On Complete` starts is stopped**, so the interrupting animation still ends up the only one running. See the chaining note under [From UnityEvents](#from-unityevents).
+- **Playing an animation that is already running always stops it where it stands, whatever its buttons say** — they're about the others. Completing it first would make it start over from its own end, where a step without a From has nowhere left to go. So a count-up played again mid-count carries on from the number on screen: keep the real total in your own code and `SetTo` that, rather than reading the number back off the screen.
+- **`Stop(name, complete: true)` and `StopAll(true)` finish the same way as `COMPLETE` `REPORT`**: `SetActive` steps run, sounds don't, `On Complete` fires, and an endless loop stops where it stands (reporting `Stopped`). `StopAll(true)` also stops anything their `On Complete` starts, so nothing is left running.
+- **A new animation starts with Interrupt Others ticked, at `COMPLETE` `REPORT`.** Anything authored before these buttons existed reads `STOP`, which is exactly what it always did, so nothing already in a scene or a shared set changes until you click.
 
 ---
 
@@ -752,8 +808,8 @@ UI Animation Player
         Name                       Show
         ▼ Steps                    2
             ▼ AFTER  [self] (Canvas Group Alpha)  0.25s  Out Quad
-                Type               Canvas Group Alpha
                 Start              [AFTER PREVIOUS]
+                Type               Canvas Group Alpha
                 Canvas Group       None            ← empty = this GameObject
                 Duration           0.25
                 Delay              0
@@ -762,8 +818,8 @@ UI Animation Player
                 To     [Absolute]  1
 
             ▼ with  Scale  0.25s  Out Back
-                Type               Scale
                 Start              [WITH PREVIOUS]   ← parallel with the fade above
+                Type               Scale
                 Rect Transform     None
                 Duration           0.25
                 Delay              0
@@ -775,7 +831,7 @@ UI Animation Player
         Play At Custom FPS         ☐
         Snapping                   [DISABLED]
         Apply From Values Immediately  ✔
-        Interrupt Others           ✔
+        Interrupt Others           ✔  [COMPLETE] [REPORT]
         On Complete                (UnityEvent)
 ```
 
@@ -802,8 +858,8 @@ UI Animation Player
         Name                       TransitionOut
         ▼ Steps                    1
             ▼ AFTER  [self] (Material Float)  0.8s  In Out Quad
-                Type               Material Float
                 Start              [AFTER PREVIOUS]
+                Type               Material Float
                 Material Inst.     None            ← empty = this GameObject
                 Shader Property    _Progress
                 Duration           0.8
@@ -816,7 +872,7 @@ UI Animation Player
         Play At Custom FPS         ☐
         Snapping                   [DISABLED]
         Apply From Values Immediately  ✔
-        Interrupt Others           ✔
+        Interrupt Others           ✔  [COMPLETE] [REPORT]
         On Complete                (UnityEvent)
 ```
 

@@ -241,11 +241,11 @@ namespace rmf_claude.DOTweenUI
 
             layout.Area = new Rect(layout.Area.x + 12f, layout.Area.y, layout.Area.width - 12f, layout.Area.height);
 
-            Rect typeRow = layout.Line();
-            if (layout.Draw) DrawTypePopup(typeRow, type);
-
             Rect startRow = layout.Line();
             if (layout.Draw) DrawStartButton(startRow, start);
+
+            Rect typeRow = layout.Line();
+            if (layout.Draw) DrawTypePopup(typeRow, type);
 
             DrawTarget(ref layout, property, stepType);
 
@@ -253,7 +253,7 @@ namespace rmf_claude.DOTweenUI
 
             // Everything that only matters once the step can reach what it drives is greyed out while
             // it cannot, so a dead step reads as dead rather than as a normal one with a warning on it.
-            // What fixes it stays live: Type, Start, the target and Target Path above, and the Clip,
+            // What fixes it stays live: Start, Type, the target and Target Path above, and the Clip,
             // Shader Property or Property below, which are drawn before the greyed part starts.
             // DisabledScopes nest by AND-ing, so nothing inside one could be switched back on.
             if (stepType == UIAnimationStepType.SetActive)

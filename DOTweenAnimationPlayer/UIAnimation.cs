@@ -79,12 +79,39 @@ namespace rmf_claude.DOTweenUI
                  "when each individual step begins. Prevents a visible flash on delayed steps.")]
         public bool ApplyFromValuesImmediately = true;
 
-        [Tooltip("Kill every other animation on this player before starting. Turn off for " +
-                 "layered animations such as a looping pulse or a hover tint.")]
+        // Drawn with CompleteInterrupted and CompleteSilently beside it on the same row, as two buttons
+        // shown while this is ticked.
+        [UIAnimationInterruptMode("CompleteInterrupted", "CompleteSilently")]
+        [Tooltip("End every other animation on this player before starting. Turn off for " +
+                 "layered animations such as a looping pulse or a hover tint.\n\n" +
+                 "The buttons beside it choose how they end.")]
         public bool InterruptOthers = true;
 
+        // Shown as Interrupt Others' first button. False on anything authored before it existed, which
+        // is exactly what those animations always did; a new animation starts with it on, set by
+        // FillUnsetDefaults rather than an initialiser - see there.
+        [HideInInspector]
+        [Tooltip("STOP = the animations this one interrupts stop where they stand.\n" +
+                 "COMPLETE = they jump to their end state first, so this one starts from where they were " +
+                 "heading rather than from wherever they happened to be.\n\n" +
+                 "Completing runs their Set Active steps but not their sounds. An endless loop has no end " +
+                 "to jump to, so it stops where it stands either way.\n\n" +
+                 "Playing this animation again while it runs always stops the running one where it stands: " +
+                 "these buttons are about the others. Click to switch.")]
+        public bool CompleteInterrupted;
+
+        // Shown as Interrupt Others' second button, and only matters while the first reads COMPLETE.
+        [HideInInspector]
+        [Tooltip("Whether an animation this one completes counts as having finished.\n\n" +
+                 "REPORT = it does: its On Complete fires, and code waiting on it hears Completed.\n" +
+                 "SILENT = it only jumps to its end state: On Complete does not fire, and code waiting on " +
+                 "it hears Interrupted.\n\n" +
+                 "Only used while the button beside it reads COMPLETE. Click to switch.")]
+        public bool CompleteSilently;
+
         [Tooltip("Fires when the animation finishes naturally. Does NOT fire if it is interrupted, " +
-                 "stopped, or killed because the GameObject was disabled.")]
+                 "stopped, or killed because the GameObject was disabled - unless the animation interrupting " +
+                 "it reads COMPLETE and REPORT beside Interrupt Others, which finishes it.")]
         public UnityEvent OnComplete;
 
         /// <summary>Effective loop count. Guards the meaningless 0 that a zero-initialised list element produces.</summary>
@@ -177,6 +204,19 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         public void FillUnsetDefaults()
         {
+            // Never filled before: an animation just added to an empty list, which arrives zero-filled
+            // (measured in 6000.3 - every bool false, whatever its initialiser says). Anything authored
+            // has a name and a loop count by now. The bools can only be filled here, where false still
+            // means "never set": anywhere else it is also what someone who unticked them holds - and,
+            // for Complete Interrupted, what every animation authored before it existed holds, which
+            // must keep stopping what it interrupts.
+            if (Loops == 0 && string.IsNullOrEmpty(Name))
+            {
+                ApplyFromValuesImmediately = true;
+                InterruptOthers = true;
+                CompleteInterrupted = true;
+            }
+
             if (Loops == 0) Loops = 1;
             if (FPS == 0f) FPS = 12f;
             if (string.IsNullOrEmpty(Name)) Name = "New Animation";

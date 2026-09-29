@@ -23,10 +23,17 @@ namespace rmf_claude.DOTweenUI
     /// </summary>
     public enum UIAnimationEndReason
     {
-        /// <summary>Ran to its natural end. The only reason that also fires On Complete.</summary>
+        /// <summary>
+        /// Ran to its end - naturally, or jumped there by an animation whose Interrupt Others reads
+        /// COMPLETE and REPORT. The only reason that also fires On Complete.
+        /// </summary>
         Completed = 0,
 
-        /// <summary>Another Play cut it short - the same animation restarting, or one with Interrupt Others.</summary>
+        /// <summary>
+        /// Another Play cut it short - the same animation restarting, or one with Interrupt Others.
+        /// Also what one reports when the animation interrupting it reads COMPLETE and SILENT: it is
+        /// at its end state, but did not finish on its own.
+        /// </summary>
         Interrupted = 1,
 
         /// <summary>Stop, StopAll, or a kill issued from outside this player.</summary>
@@ -86,6 +93,10 @@ namespace rmf_claude.DOTweenUI
 
         private bool initialized;
 
+        // True while Finish jumps an interrupted animation to its end, so the sounds it skips over do
+        // not all go off at once.
+        private bool finishing;
+
         /// <summary>True while any animation on this player is running.</summary>
         public bool IsAnyPlaying
         {
@@ -107,7 +118,7 @@ namespace rmf_claude.DOTweenUI
 
         private void OnDisable()
         {
-            if (KillOnDisable) StopAll(false, UIAnimationEndReason.Disabled);
+            if (KillOnDisable) StopAll(UIAnimationEndReason.Disabled);
         }
 
         /// <summary>
@@ -118,7 +129,7 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         private void OnDestroy()
         {
-            StopAll(false, UIAnimationEndReason.Destroyed);
+            StopAll(UIAnimationEndReason.Destroyed);
         }
 
     #if UNITY_EDITOR
@@ -147,7 +158,8 @@ namespace rmf_claude.DOTweenUI
 
         /// <summary>
         /// Plays a named animation and invokes onComplete when it finishes naturally.
-        /// The callback does NOT fire if the animation is interrupted, stopped, or killed on disable.
+        /// The callback does NOT fire if the animation is interrupted, stopped, or killed on disable -
+        /// except by an animation whose Interrupt Others reads COMPLETE and REPORT, which finishes it.
         /// Use the Action&lt;UIAnimationEndReason&gt; overload when you need one that always fires.
         /// </summary>
         public Sequence Play(string animationName, Action onComplete)
@@ -189,13 +201,20 @@ namespace rmf_claude.DOTweenUI
                 return null;
             }
 
-            Kill(animation, false, UIAnimationEndReason.Interrupted);
+            Kill(animation, UIAnimationEndReason.Interrupted);
 
             if (animation.InterruptOthers)
             {
-                for (int i = 0; i < runtime.Count; i++)
+                if (animation.CompleteInterrupted)
                 {
-                    if (runtime[i] != animation) Kill(runtime[i], false, UIAnimationEndReason.Interrupted);
+                    FinishRunning(animation, animation.CompleteSilently, UIAnimationEndReason.Interrupted);
+                }
+                else
+                {
+                    for (int i = 0; i < runtime.Count; i++)
+                    {
+                        if (runtime[i] != animation) Kill(runtime[i], UIAnimationEndReason.Interrupted);
+                    }
                 }
             }
 
@@ -282,11 +301,18 @@ namespace rmf_claude.DOTweenUI
             PlayInternal(animationName, null, null);
         }
 
-        /// <summary>Stops one animation. complete=true jumps to the end state and fires its callbacks.</summary>
+        /// <summary>
+        /// Stops one animation where it stands. complete=true finishes it instead: it jumps to its end
+        /// state, Set Active steps included but not sounds, and On Complete fires. An endless loop has
+        /// no end to jump to, so it stops where it stands either way.
+        /// </summary>
         public void Stop(string animationName, bool complete = false)
         {
             UIAnimation animation = Find(animationName);
-            if (animation != null) Kill(animation, complete, UIAnimationEndReason.Stopped);
+            if (animation == null) return;
+
+            if (complete) Finish(animation, false, UIAnimationEndReason.Stopped);
+            else Kill(animation, UIAnimationEndReason.Stopped);
         }
 
         /// <summary>
@@ -300,17 +326,21 @@ namespace rmf_claude.DOTweenUI
             Stop(animationName);
         }
 
-        /// <summary>Stops every animation on this player.</summary>
+        /// <summary>
+        /// Stops every animation on this player. complete=true finishes each one that is running, as
+        /// Stop does, and anything their On Complete starts is then stopped where it stands.
+        /// </summary>
         public void StopAll(bool complete = false)
         {
-            StopAll(complete, UIAnimationEndReason.Stopped);
+            if (complete) FinishRunning(null, false, UIAnimationEndReason.Stopped);
+            else StopAll(UIAnimationEndReason.Stopped);
         }
 
-        private void StopAll(bool complete, UIAnimationEndReason reason)
+        private void StopAll(UIAnimationEndReason reason)
         {
             for (int i = 0; i < runtime.Count; i++)
             {
-                Kill(runtime[i], complete, reason);
+                Kill(runtime[i], reason);
             }
         }
 
@@ -360,6 +390,113 @@ namespace rmf_claude.DOTweenUI
                     steps[s].CaptureBaseline();
                 }
             }
+        }
+
+        // ---------------------------------------------------------------- From / To from code
+
+        /// <summary>
+        /// Replaces a step's To value with one set from code, for every Play of that animation from now
+        /// on, until ClearOverrides. Steps are numbered from 0, top to bottom as the Inspector lists them.
+        ///
+        ///     player.SetTo("CountUp", 0, score);
+        ///     player.Play("CountUp");
+        ///
+        /// The value means exactly what typing it into the step would: the step's mode still applies, so
+        /// a Baseline To lands on the resting value plus this. Pass the kind of value the step tweens -
+        /// a number for a fade, an int member or a counted number, a Vector3 (a Vector2 converts) for a
+        /// move, a Color, a string for typed text. Anything else is ignored with a warning, and returns
+        /// false.
+        ///
+        /// An animation already running keeps the value it started with. Only this player's copy
+        /// changes - never the Inspector data, and never a shared Animation Set, so other players using
+        /// the same set are unaffected.
+        /// </summary>
+        public bool SetTo(string animationName, int stepIndex, float value)
+        {
+            return SetEndpoint(animationName, stepIndex, true, UIAnimationValueKind.Float, Vector3.zero, value, Color.clear, null);
+        }
+
+        /// <summary>Replaces a vector step's To value from code. See SetTo(string, int, float).</summary>
+        public bool SetTo(string animationName, int stepIndex, Vector3 value)
+        {
+            return SetEndpoint(animationName, stepIndex, true, UIAnimationValueKind.Vector, value, 0f, Color.clear, null);
+        }
+
+        /// <summary>Replaces a colour step's To value from code. See SetTo(string, int, float).</summary>
+        public bool SetTo(string animationName, int stepIndex, Color value)
+        {
+            return SetEndpoint(animationName, stepIndex, true, UIAnimationValueKind.Color, Vector3.zero, 0f, value, null);
+        }
+
+        /// <summary>Replaces a typed-text step's To value from code. See SetTo(string, int, float).</summary>
+        public bool SetTo(string animationName, int stepIndex, string value)
+        {
+            return SetEndpoint(animationName, stepIndex, true, UIAnimationValueKind.Text, Vector3.zero, 0f, Color.clear, value);
+        }
+
+        /// <summary>
+        /// Replaces a step's From value from code - the same as SetTo, for the other end. The step's From
+        /// has to be on (its button reads FROM): without one a step starts from wherever the value
+        /// already is and has no From to replace, so that is ignored with a warning, and returns false.
+        /// </summary>
+        public bool SetFrom(string animationName, int stepIndex, float value)
+        {
+            return SetEndpoint(animationName, stepIndex, false, UIAnimationValueKind.Float, Vector3.zero, value, Color.clear, null);
+        }
+
+        /// <summary>Replaces a vector step's From value from code. See SetFrom(string, int, float).</summary>
+        public bool SetFrom(string animationName, int stepIndex, Vector3 value)
+        {
+            return SetEndpoint(animationName, stepIndex, false, UIAnimationValueKind.Vector, value, 0f, Color.clear, null);
+        }
+
+        /// <summary>Replaces a colour step's From value from code. See SetFrom(string, int, float).</summary>
+        public bool SetFrom(string animationName, int stepIndex, Color value)
+        {
+            return SetEndpoint(animationName, stepIndex, false, UIAnimationValueKind.Color, Vector3.zero, 0f, value, null);
+        }
+
+        /// <summary>Replaces a typed-text step's From value from code. See SetFrom(string, int, float).</summary>
+        public bool SetFrom(string animationName, int stepIndex, string value)
+        {
+            return SetEndpoint(animationName, stepIndex, false, UIAnimationValueKind.Text, Vector3.zero, 0f, Color.clear, value);
+        }
+
+        /// <summary>Puts every step of an animation back on the From and To values authored in the Inspector.</summary>
+        public void ClearOverrides(string animationName)
+        {
+            UIAnimation animation = Find(animationName);
+            if (animation == null) return;
+
+            for (int i = 0; i < animation.Steps.Count; i++)
+            {
+                animation.Steps[i].ClearOverrides();
+            }
+        }
+
+        private bool SetEndpoint(string animationName, int stepIndex, bool to, UIAnimationValueKind kind,
+                                 Vector3 vector, float number, Color color, string text)
+        {
+            string method = to ? "SetTo" : "SetFrom";
+
+            UIAnimation animation = Find(animationName);
+            if (animation == null) return false;
+
+            if (stepIndex < 0 || stepIndex >= animation.Steps.Count)
+            {
+                Debug.LogWarning(
+                    "UIAnimationPlayer on '" + name + "': " + method + " asked for step " + stepIndex + " of animation '" +
+                    animationName + "', which has " + animation.Steps.Count + " (numbered from 0).", this);
+                return false;
+            }
+
+            string problem = animation.Steps[stepIndex].OverrideEndpoint(to, kind, vector, number, color, text);
+            if (problem == null) return true;
+
+            Debug.LogWarning(
+                "UIAnimationPlayer on '" + name + "': " + method + " on animation '" + animationName + "' step " +
+                stepIndex + " was ignored - " + problem + ".", this);
+            return false;
         }
 
         // ---------------------------------------------------------------- internals
@@ -497,7 +634,10 @@ namespace rmf_claude.DOTweenUI
                     }
                     else
                     {
-                        sequence.InsertCallback(at, () => captured.PlaySound());
+                        sequence.InsertCallback(at, () =>
+                        {
+                            if (!finishing) captured.PlaySound();
+                        });
                     }
 
                     anyContent = true;
@@ -551,7 +691,11 @@ namespace rmf_claude.DOTweenUI
             return total;
         }
 
-        private void Kill(UIAnimation animation, bool complete, UIAnimationEndReason reason)
+        /// <summary>
+        /// Stops an animation where it stands. Finish is the other way to end one, jumping it to its
+        /// end state first - see there for why that is not a kill with DOTween's complete flag.
+        /// </summary>
+        private void Kill(UIAnimation animation, UIAnimationEndReason reason)
         {
             if (animation.RuntimeSequence == null) return;
 
@@ -562,17 +706,119 @@ namespace rmf_claude.DOTweenUI
             // that path reports this kill's reason rather than the armed default.
             animation.PendingEndReason = reason;
 
-            if (!complete)
+            // Drop the callbacks first so a stopped animation never reports completion. Cleared
+            // before the kill, whose OnKill may start a new play of this same animation and keep it.
+            animation.RuntimeSequence = null;
+            animation.RuntimeCallback = null;
+
+            if (sequence.IsActive()) sequence.Kill();
+
+            if (armed == null) return;
+
+            if (ReferenceEquals(animation.RuntimeEndCallback, armed)) animation.RuntimeEndCallback = null;
+
+            // In play mode the sequence's OnKill has already reported this, and the delegate's
+            // fire-once flag makes this a no-op. It does the work out of play mode, where DOTween is
+            // never initialised and a kill does nothing, and for any sequence whose callbacks were
+            // stripped.
+            armed.Invoke(reason);
+        }
+
+        /// <summary>
+        /// Every animation running as this is called, bar except, is jumped to its end state, then
+        /// anything still running is stopped. Interrupt Others set to COMPLETE (except = the animation
+        /// starting) and StopAll(complete: true) (except = null).
+        ///
+        /// Who is running is gathered before any of them is finished, sequence and all, because a
+        /// reported completion runs game code - an On Complete chaining into the next animation, say -
+        /// and what that code starts is not something this call set out to finish. Finishing it too
+        /// would run a whole chain to its end in one frame, or not, depending on the order the
+        /// animations happen to be listed in. The sweep afterwards stops it instead, and anything else
+        /// it started, except included, so nothing is left running beside the one about to start - or
+        /// at all, for StopAll. Allocates, but only when there is something to finish.
+        /// </summary>
+        private void FinishRunning(UIAnimation except, bool silently, UIAnimationEndReason reason)
+        {
+            List<UIAnimation> live = null;
+            List<Sequence> sequences = null;
+
+            for (int i = 0; i < runtime.Count; i++)
             {
-                // Drop the callbacks first so an interrupted animation never reports completion.
-                animation.RuntimeSequence = null;
-                animation.RuntimeCallback = null;
+                if (runtime[i] == except || runtime[i].RuntimeSequence == null) continue;
+
+                if (live == null)
+                {
+                    live = new List<UIAnimation>();
+                    sequences = new List<Sequence>();
+                }
+
+                live.Add(runtime[i]);
+                sequences.Add(runtime[i].RuntimeSequence);
             }
 
-            if (sequence.IsActive()) sequence.Kill(complete);
+            if (live == null) return;
 
-            // Killing runs the sequence's own callbacks synchronously, and those can start a new
-            // play of this same animation. Only clear what still belongs to the play being killed.
+            for (int i = 0; i < live.Count; i++)
+            {
+                // Already ended, or restarted by an earlier one's callbacks: not the play gathered above.
+                if (ReferenceEquals(live[i].RuntimeSequence, sequences[i])) Finish(live[i], silently, reason);
+            }
+
+            for (int i = 0; i < runtime.Count; i++)
+            {
+                Kill(runtime[i], reason);
+            }
+        }
+
+        /// <summary>
+        /// Ends an animation by jumping it to its end state first - Stop and StopAll with complete, and
+        /// Interrupt Others set to COMPLETE. DOTween's own Kill(complete: true) is not the same thing:
+        /// it completes a sequence without its internal callbacks (measured), so a Set Active step still
+        /// ahead would never run and the end state would be wrong. Complete(true) runs them, and the
+        /// sounds among them are skipped through finishing.
+        ///
+        /// silently keeps it from counting as a finish: On Complete and the plain Action overload do
+        /// not fire, and onEnd hears reason. Otherwise it finishes like any natural end, with
+        /// Completed. An endless loop has no end to jump to and is stopped where it stands, reporting
+        /// reason either way.
+        /// </summary>
+        private void Finish(UIAnimation animation, bool silently, UIAnimationEndReason reason)
+        {
+            if (animation.RuntimeSequence == null) return;
+
+            Sequence sequence = animation.RuntimeSequence;
+            Action<UIAnimationEndReason> armed = animation.RuntimeEndCallback;
+
+            // Read by the sequence's OnKill: the autokill after completing, or the kill below.
+            animation.PendingEndReason = reason;
+
+            if (silently)
+            {
+                animation.RuntimeCallback = null;
+                sequence.OnComplete(null);
+            }
+
+            if (sequence.IsActive() && sequence.Loops() != -1)
+            {
+                // Put back rather than cleared: a reported completion's callbacks can finish another
+                // animation on this player before this one returns.
+                bool wasFinishing = finishing;
+                finishing = true;
+
+                try
+                {
+                    sequence.Complete(true);
+                }
+                finally
+                {
+                    finishing = wasFinishing;
+                }
+            }
+
+            if (sequence.IsActive()) sequence.Kill();
+
+            // The completion's callbacks can start a new play of this same animation. Only clear what
+            // still belongs to the play being finished.
             if (ReferenceEquals(animation.RuntimeSequence, sequence))
             {
                 animation.RuntimeSequence = null;
@@ -583,11 +829,9 @@ namespace rmf_claude.DOTweenUI
 
             if (ReferenceEquals(animation.RuntimeEndCallback, armed)) animation.RuntimeEndCallback = null;
 
-            // In play mode the sequence has already resolved this itself - through OnComplete for
-            // complete = true, through OnKill otherwise - and the delegate's fire-once flag makes
-            // this a no-op. It does the work out of play mode, where DOTween is never initialised
-            // and a kill does nothing, and for any sequence whose callbacks were stripped.
-            armed.Invoke(complete ? UIAnimationEndReason.Completed : reason);
+            // A reported completion has already said Completed, and the fire-once flag makes this a
+            // no-op. Anything else - silent, or an endless loop - ends for the caller's reason.
+            armed.Invoke(reason);
         }
 
         private UIAnimation Find(string animationName)

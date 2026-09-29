@@ -6,6 +6,8 @@
 // See README.md in the folder above for usage.
 // -----------------------------------------------------------------------------
 
+using System.Collections;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 
@@ -28,7 +30,8 @@ namespace rmf_claude.DOTweenUI
     /// Entries appear on the property context menu:
     ///   right-click an animation header  -> Copy / Paste / Mirror / Duplicate as Mirrored
     ///   right-click a step header        -> Copy / Paste / Mirror
-    ///   right-click the Animations list  -> Paste Animation (add to end / mirrored)
+    ///   right-click the Animations list  -> Paste Animation (add to end / mirrored), and on a player
+    ///                                       Save as Animation Set (see UIAnimationSetExport)
     ///   right-click the Steps list       -> Paste Step (add to end / mirrored)
     ///
     /// On a UIAnimationPlayer and on a UIAnimationAsset alike, so an animation can be copied out
@@ -89,7 +92,7 @@ namespace rmf_claude.DOTweenUI
         {
             string noun = isAnimation ? "Animation" : "Step";
 
-            menu.AddSeparator(string.Empty);
+            Separate(menu);
             menu.AddItem(new GUIContent("Copy " + noun), false, () => Copy(element, isAnimation));
 
             var paste = new GUIContent("Paste " + noun + " (overwrite)");
@@ -133,7 +136,7 @@ namespace rmf_claude.DOTweenUI
             var paste = new GUIContent("Paste " + noun + " (add to end)");
             var pasteMirrored = new GUIContent("Paste " + noun + " Mirrored (add to end)");
 
-            menu.AddSeparator(string.Empty);
+            Separate(menu);
 
             if (HasCopy(isAnimation))
             {
@@ -145,6 +148,44 @@ namespace rmf_claude.DOTweenUI
                 menu.AddDisabledItem(paste);
                 menu.AddDisabledItem(pasteMirrored);
             }
+
+            // A player's own list only: an asset already is a set.
+            if (isAnimation && list.propertyPath == "Animations" && !list.serializedObject.isEditingMultipleObjects)
+            {
+                var player = list.serializedObject.targetObject as UIAnimationPlayer;
+                if (player != null) UIAnimationSetExport.AddMenuItems(menu, player, list);
+            }
+        }
+
+        /// <summary>
+        /// A divider before this tool's entries, unless the menu already ends in one. Unity 6000.3 ends
+        /// its own part of every property menu with a divider before any handler runs (measured), so
+        /// adding one regardless drew two in a row on Windows. GenericMenu has no public way to read
+        /// its items, so this looks at its private list, and adds the divider anyway if that ever stops
+        /// being readable.
+        /// </summary>
+        private static void Separate(GenericMenu menu)
+        {
+            if (menu.GetItemCount() == 0 || EndsWithSeparator(menu)) return;
+            menu.AddSeparator(string.Empty);
+        }
+
+        private static FieldInfo menuItemsField;
+
+        private static bool EndsWithSeparator(GenericMenu menu)
+        {
+            if (menuItemsField == null)
+            {
+                menuItemsField = typeof(GenericMenu).GetField("m_MenuItems", BindingFlags.Instance | BindingFlags.NonPublic);
+            }
+
+            var items = menuItemsField != null ? menuItemsField.GetValue(menu) as IList : null;
+            if (items == null || items.Count == 0) return false;
+
+            object last = items[items.Count - 1];
+            FieldInfo separator = last != null ? last.GetType().GetField("separator") : null;
+
+            return separator != null && separator.FieldType == typeof(bool) && (bool)separator.GetValue(last);
         }
 
         // ---------------------------------------------------------------- commands

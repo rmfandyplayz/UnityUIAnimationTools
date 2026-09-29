@@ -323,6 +323,28 @@ namespace rmf_claude.DOTweenUI
         [NonSerialized] private bool shaderPropertyValid;
         [NonSerialized] private bool targetPathMissed;
 
+        // From and To values set from code, through UIAnimationPlayer.SetFrom / SetTo. Kept beside the
+        // authored values rather than written over them, so nothing a game does at runtime can reach
+        // the Inspector's data and ClearOverrides has the authored value to go back to. Every read of
+        // an endpoint goes through the *Value properties below, which return the authored field
+        // whenever nothing is set - a step nobody overrides builds exactly what it always did.
+        [NonSerialized] private EndpointOverride fromOverride;
+        [NonSerialized] private EndpointOverride toOverride;
+
+        /// <summary>
+        /// One endpoint's values set from code, a slot per kind of value. Per kind rather than one
+        /// slot with a tag, so a step whose Type changes afterwards reads its own kind's value or the
+        /// authored one, never another kind's leftovers.
+        /// </summary>
+        private struct EndpointOverride
+        {
+            public bool HasVector, HasFloat, HasColor, HasText;
+            public Vector3 Vector;
+            public float Float;
+            public Color Color;
+            public string Text;
+        }
+
     #if UNITY_EDITOR
         /// <summary>
         /// Set by the inspector's edit-mode preview, for as long as a preview is running, so PlaySound
@@ -362,6 +384,16 @@ namespace rmf_claude.DOTweenUI
         {
             get { return Delay + TweenDuration; }
         }
+
+        // The endpoint values playback actually uses: set from code if they have been, authored if not.
+        private Vector3 FromVectorValue { get { return fromOverride.HasVector ? fromOverride.Vector : FromVector; } }
+        private Vector3 ToVectorValue { get { return toOverride.HasVector ? toOverride.Vector : ToVector; } }
+        private float FromFloatValue { get { return fromOverride.HasFloat ? fromOverride.Float : FromFloat; } }
+        private float ToFloatValue { get { return toOverride.HasFloat ? toOverride.Float : ToFloat; } }
+        private Color FromColorValue { get { return fromOverride.HasColor ? fromOverride.Color : FromColor; } }
+        private Color ToColorValue { get { return toOverride.HasColor ? toOverride.Color : ToColor; } }
+        private string FromTextValue { get { return fromOverride.HasText ? fromOverride.Text : FromText; } }
+        private string ToTextValue { get { return toOverride.HasText ? toOverride.Text : ToText; } }
 
         /// <summary>
         /// True when the step is a DOTween relative tween - no FROM, and a TO that is an offset
@@ -936,56 +968,56 @@ namespace rmf_claude.DOTweenUI
             switch (Type)
             {
                 case UIAnimationStepType.AnchoredPosition:
-                    if (rect != null) rect.anchoredPosition = ResolveVector(FromMode, FromVector);
+                    if (rect != null) rect.anchoredPosition = ResolveVector(FromMode, FromVectorValue);
                     break;
 
                 case UIAnimationStepType.LocalPosition:
-                    if (rect != null) rect.localPosition = ResolveVector(FromMode, FromVector);
+                    if (rect != null) rect.localPosition = ResolveVector(FromMode, FromVectorValue);
                     break;
 
                 case UIAnimationStepType.Scale:
-                    if (rect != null) rect.localScale = ResolveVector(FromMode, FromVector);
+                    if (rect != null) rect.localScale = ResolveVector(FromMode, FromVectorValue);
                     break;
 
                 case UIAnimationStepType.Rotation:
-                    if (rect != null) rect.localEulerAngles = ResolveVector(FromMode, FromVector);
+                    if (rect != null) rect.localEulerAngles = ResolveVector(FromMode, FromVectorValue);
                     break;
 
                 case UIAnimationStepType.SizeDelta:
-                    if (rect != null) rect.sizeDelta = ResolveVector(FromMode, FromVector);
+                    if (rect != null) rect.sizeDelta = ResolveVector(FromMode, FromVectorValue);
                     break;
 
                 case UIAnimationStepType.OffsetMin:
-                    if (rect != null) rect.offsetMin = ResolveVector(FromMode, FromVector);
+                    if (rect != null) rect.offsetMin = ResolveVector(FromMode, FromVectorValue);
                     break;
 
                 case UIAnimationStepType.OffsetMax:
-                    if (rect != null) rect.offsetMax = ResolveVector(FromMode, FromVector);
+                    if (rect != null) rect.offsetMax = ResolveVector(FromMode, FromVectorValue);
                     break;
 
                 case UIAnimationStepType.CanvasGroupAlpha:
-                    if (canvasGroup != null) canvasGroup.alpha = ResolveFloat(FromMode, FromFloat);
+                    if (canvasGroup != null) canvasGroup.alpha = ResolveFloat(FromMode, FromFloatValue);
                     break;
 
                 case UIAnimationStepType.GraphicColor:
-                    if (graphic != null) graphic.color = ResolveColor(FromMode, FromColor);
+                    if (graphic != null) graphic.color = ResolveColor(FromMode, FromColorValue);
                     break;
 
                 case UIAnimationStepType.GraphicAlpha:
                     if (graphic != null)
                     {
                         Color c = graphic.color;
-                        c.a = ResolveFloat(FromMode, FromFloat);
+                        c.a = ResolveFloat(FromMode, FromFloatValue);
                         graphic.color = c;
                     }
                     break;
 
                 case UIAnimationStepType.MaterialFloat:
-                    if (HasMaterial()) materialInstance.Material.SetFloat(shaderPropertyId, ResolveFloat(FromMode, FromFloat));
+                    if (HasMaterial()) materialInstance.Material.SetFloat(shaderPropertyId, ResolveFloat(FromMode, FromFloatValue));
                     break;
 
                 case UIAnimationStepType.MaterialColor:
-                    if (HasMaterial()) materialInstance.Material.SetColor(shaderPropertyId, ResolveColor(FromMode, FromColor));
+                    if (HasMaterial()) materialInstance.Material.SetColor(shaderPropertyId, ResolveColor(FromMode, FromColorValue));
                     break;
 
                 case UIAnimationStepType.CustomProperty:
@@ -1030,8 +1062,8 @@ namespace rmf_claude.DOTweenUI
             {
                 case UIAnimationStepType.AnchoredPosition:
                 {
-                    var t = rect.DOAnchorPos(ResolveVector(ToMode, ToVector), Duration, snap);
-                    if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
+                    var t = rect.DOAnchorPos(ResolveVector(ToMode, ToVectorValue), Duration, snap);
+                    if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVectorValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1039,8 +1071,8 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.LocalPosition:
                 {
-                    var t = rect.DOLocalMove(ResolveVector(ToMode, ToVector), Duration, snap);
-                    if (useFrom) t.From(ResolveVector(FromMode, FromVector), applyFromImmediately);
+                    var t = rect.DOLocalMove(ResolveVector(ToMode, ToVectorValue), Duration, snap);
+                    if (useFrom) t.From(ResolveVector(FromMode, FromVectorValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1048,8 +1080,8 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.Scale:
                 {
-                    var t = rect.DOScale(ResolveVector(ToMode, ToVector), Duration);
-                    if (useFrom) t.From(ResolveVector(FromMode, FromVector), applyFromImmediately);
+                    var t = rect.DOScale(ResolveVector(ToMode, ToVectorValue), Duration);
+                    if (useFrom) t.From(ResolveVector(FromMode, FromVectorValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1057,8 +1089,8 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.Rotation:
                 {
-                    var t = rect.DOLocalRotate(ResolveVector(ToMode, ToVector), Duration, RotateMode.FastBeyond360);
-                    if (useFrom) t.From(ResolveVector(FromMode, FromVector), applyFromImmediately);
+                    var t = rect.DOLocalRotate(ResolveVector(ToMode, ToVectorValue), Duration, RotateMode.FastBeyond360);
+                    if (useFrom) t.From(ResolveVector(FromMode, FromVectorValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1066,8 +1098,8 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.SizeDelta:
                 {
-                    var t = rect.DOSizeDelta(ResolveVector(ToMode, ToVector), Duration, snap);
-                    if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
+                    var t = rect.DOSizeDelta(ResolveVector(ToMode, ToVectorValue), Duration, snap);
+                    if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVectorValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1079,9 +1111,9 @@ namespace rmf_claude.DOTweenUI
                     // The generic To() tween supports From, SetRelative and snapping just the same.
                     RectTransform target = rect;
                     var t = DOTween.To(() => target.offsetMin, v => target.offsetMin = v,
-                                       (Vector2)ResolveVector(ToMode, ToVector), Duration);
+                                       (Vector2)ResolveVector(ToMode, ToVectorValue), Duration);
                     t.SetOptions(snap);
-                    if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
+                    if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVectorValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1091,9 +1123,9 @@ namespace rmf_claude.DOTweenUI
                 {
                     RectTransform target = rect;
                     var t = DOTween.To(() => target.offsetMax, v => target.offsetMax = v,
-                                       (Vector2)ResolveVector(ToMode, ToVector), Duration);
+                                       (Vector2)ResolveVector(ToMode, ToVectorValue), Duration);
                     t.SetOptions(snap);
-                    if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
+                    if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVectorValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1101,8 +1133,8 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.CanvasGroupAlpha:
                 {
-                    var t = canvasGroup.DOFade(ResolveFloat(ToMode, ToFloat), Duration);
-                    if (useFrom) t.From(ResolveFloat(FromMode, FromFloat), applyFromImmediately);
+                    var t = canvasGroup.DOFade(ResolveFloat(ToMode, ToFloatValue), Duration);
+                    if (useFrom) t.From(ResolveFloat(FromMode, FromFloatValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1110,8 +1142,8 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.GraphicColor:
                 {
-                    var t = graphic.DOColor(ResolveColor(ToMode, ToColor), Duration);
-                    if (useFrom) t.From(ResolveColor(FromMode, FromColor), applyFromImmediately);
+                    var t = graphic.DOColor(ResolveColor(ToMode, ToColorValue), Duration);
+                    if (useFrom) t.From(ResolveColor(FromMode, FromColorValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1119,8 +1151,8 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.GraphicAlpha:
                 {
-                    var t = graphic.DOFade(ResolveFloat(ToMode, ToFloat), Duration);
-                    if (useFrom) t.From(ResolveFloat(FromMode, FromFloat), applyFromImmediately);
+                    var t = graphic.DOFade(ResolveFloat(ToMode, ToFloatValue), Duration);
+                    if (useFrom) t.From(ResolveFloat(FromMode, FromFloatValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1128,8 +1160,8 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.MaterialFloat:
                 {
-                    var t = materialInstance.Material.DOFloat(ResolveFloat(ToMode, ToFloat), shaderPropertyId, Duration);
-                    if (useFrom) t.From(ResolveFloat(FromMode, FromFloat), applyFromImmediately);
+                    var t = materialInstance.Material.DOFloat(ResolveFloat(ToMode, ToFloatValue), shaderPropertyId, Duration);
+                    if (useFrom) t.From(ResolveFloat(FromMode, FromFloatValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1137,38 +1169,38 @@ namespace rmf_claude.DOTweenUI
 
                 case UIAnimationStepType.MaterialColor:
                 {
-                    var t = materialInstance.Material.DOColor(ResolveColor(ToMode, ToColor), shaderPropertyId, Duration);
-                    if (useFrom) t.From(ResolveColor(FromMode, FromColor), applyFromImmediately);
+                    var t = materialInstance.Material.DOColor(ResolveColor(ToMode, ToColorValue), shaderPropertyId, Duration);
+                    if (useFrom) t.From(ResolveColor(FromMode, FromColorValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
                 }
 
                 case UIAnimationStepType.PunchScale:
-                    tween = rect.DOPunchScale(ToVector, Duration, Vibrato, Elasticity);
+                    tween = rect.DOPunchScale(ToVectorValue, Duration, Vibrato, Elasticity);
                     break;
 
                 case UIAnimationStepType.PunchAnchoredPosition:
-                    tween = rect.DOPunchAnchorPos(ToVector, Duration, Vibrato, Elasticity, snap);
+                    tween = rect.DOPunchAnchorPos(ToVectorValue, Duration, Vibrato, Elasticity, snap);
                     break;
 
                 case UIAnimationStepType.PunchRotation:
-                    tween = rect.DOPunchRotation(ToVector, Duration, Vibrato, Elasticity);
+                    tween = rect.DOPunchRotation(ToVectorValue, Duration, Vibrato, Elasticity);
                     break;
 
                 case UIAnimationStepType.ShakeAnchoredPosition:
-                    tween = rect.DOShakeAnchorPos(Duration, ToFloat, Vibrato, Randomness, snap);
+                    tween = rect.DOShakeAnchorPos(Duration, ToFloatValue, Vibrato, Randomness, snap);
                     break;
 
                 // The rotation and scale shakes take a per-axis strength rather than ShakeAnchoredPosition's
                 // single number. A single number shakes all three axes, and on a UI element rotating
                 // around X or Y reads as the element tipping over in 3D - Z alone is the usual shake.
                 case UIAnimationStepType.ShakeRotation:
-                    tween = rect.DOShakeRotation(Duration, ToVector, Vibrato, Randomness);
+                    tween = rect.DOShakeRotation(Duration, ToVectorValue, Vibrato, Randomness);
                     break;
 
                 case UIAnimationStepType.ShakeScale:
-                    tween = rect.DOShakeScale(Duration, ToVector, Vibrato, Randomness);
+                    tween = rect.DOShakeScale(Duration, ToVectorValue, Vibrato, Randomness);
                     break;
 
                 case UIAnimationStepType.CustomProperty:
@@ -1318,7 +1350,7 @@ namespace rmf_claude.DOTweenUI
 
             if (HasAuthoredStart)
             {
-                Vector3 from = Flatten(ResolveVector(FromMode, FromVector));
+                Vector3 from = Flatten(ResolveVector(FromMode, FromVectorValue));
                 read = () => from;
 
                 // The same thing From(value, setImmediately: true) does on every other step.
@@ -1357,7 +1389,7 @@ namespace rmf_claude.DOTweenUI
 
             for (int i = 0; i <= Waypoints.Count; i++)
             {
-                Vector3 raw = i < Waypoints.Count ? Waypoints[i] : ToVector;
+                Vector3 raw = i < Waypoints.Count ? Waypoints[i] : ToVectorValue;
                 Vector3 point = Flatten(ResolveVector(ToMode, raw));
 
                 if (points.Count > 0 && points[points.Count - 1] == point) continue;
@@ -1511,31 +1543,31 @@ namespace rmf_claude.DOTweenUI
             switch (member.Kind)
             {
                 case UIAnimationPropertyKind.Float:
-                    member.Setter<float>()(ResolveFloat(FromMode, FromFloat));
+                    member.Setter<float>()(ResolveFloat(FromMode, FromFloatValue));
                     break;
 
                 case UIAnimationPropertyKind.Int:
-                    member.Setter<int>()(Mathf.RoundToInt(ResolveFloat(FromMode, FromFloat)));
+                    member.Setter<int>()(Mathf.RoundToInt(ResolveFloat(FromMode, FromFloatValue)));
                     break;
 
                 case UIAnimationPropertyKind.Vector2:
-                    member.Setter<Vector2>()((Vector2)ResolveVector(FromMode, FromVector));
+                    member.Setter<Vector2>()((Vector2)ResolveVector(FromMode, FromVectorValue));
                     break;
 
                 case UIAnimationPropertyKind.Vector3:
-                    member.Setter<Vector3>()(ResolveVector(FromMode, FromVector));
+                    member.Setter<Vector3>()(ResolveVector(FromMode, FromVectorValue));
                     break;
 
                 case UIAnimationPropertyKind.Color:
-                    member.Setter<Color>()(ResolveColor(FromMode, FromColor));
+                    member.Setter<Color>()(ResolveColor(FromMode, FromColorValue));
                     break;
 
                 case UIAnimationPropertyKind.Text:
-                    member.Setter<string>()(ResolveText(FromMode, FromText));
+                    member.Setter<string>()(ResolveText(FromMode, FromTextValue));
                     break;
 
                 default:
-                    member.Setter<string>()(UIAnimationProperties.FormatNumber(ResolveFloat(FromMode, FromFloat), NumberFormat));
+                    member.Setter<string>()(UIAnimationProperties.FormatNumber(ResolveFloat(FromMode, FromFloatValue), NumberFormat));
                     break;
             }
         }
@@ -1561,8 +1593,8 @@ namespace rmf_claude.DOTweenUI
                     Func<float> read = member.Getter<float>();
                     Action<float> write = member.Setter<float>();
 
-                    var t = DOTween.To(() => read(), v => write(v), ResolveFloat(ToMode, ToFloat), Duration);
-                    if (useFrom) t.From(ResolveFloat(FromMode, FromFloat), applyFromImmediately);
+                    var t = DOTween.To(() => read(), v => write(v), ResolveFloat(ToMode, ToFloatValue), Duration);
+                    if (useFrom) t.From(ResolveFloat(FromMode, FromFloatValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1573,8 +1605,8 @@ namespace rmf_claude.DOTweenUI
                     Func<int> read = member.Getter<int>();
                     Action<int> write = member.Setter<int>();
 
-                    var t = DOTween.To(() => read(), v => write(v), Mathf.RoundToInt(ResolveFloat(ToMode, ToFloat)), Duration);
-                    if (useFrom) t.From(Mathf.RoundToInt(ResolveFloat(FromMode, FromFloat)), applyFromImmediately);
+                    var t = DOTween.To(() => read(), v => write(v), Mathf.RoundToInt(ResolveFloat(ToMode, ToFloatValue)), Duration);
+                    if (useFrom) t.From(Mathf.RoundToInt(ResolveFloat(FromMode, FromFloatValue)), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1585,8 +1617,8 @@ namespace rmf_claude.DOTweenUI
                     Func<Vector2> read = member.Getter<Vector2>();
                     Action<Vector2> write = member.Setter<Vector2>();
 
-                    var t = DOTween.To(() => read(), v => write(v), (Vector2)ResolveVector(ToMode, ToVector), Duration);
-                    if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVector), applyFromImmediately);
+                    var t = DOTween.To(() => read(), v => write(v), (Vector2)ResolveVector(ToMode, ToVectorValue), Duration);
+                    if (useFrom) t.From((Vector2)ResolveVector(FromMode, FromVectorValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1597,8 +1629,8 @@ namespace rmf_claude.DOTweenUI
                     Func<Vector3> read = member.Getter<Vector3>();
                     Action<Vector3> write = member.Setter<Vector3>();
 
-                    var t = DOTween.To(() => read(), v => write(v), ResolveVector(ToMode, ToVector), Duration);
-                    if (useFrom) t.From(ResolveVector(FromMode, FromVector), applyFromImmediately);
+                    var t = DOTween.To(() => read(), v => write(v), ResolveVector(ToMode, ToVectorValue), Duration);
+                    if (useFrom) t.From(ResolveVector(FromMode, FromVectorValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1609,8 +1641,8 @@ namespace rmf_claude.DOTweenUI
                     Func<Color> read = member.Getter<Color>();
                     Action<Color> write = member.Setter<Color>();
 
-                    var t = DOTween.To(() => read(), v => write(v), ResolveColor(ToMode, ToColor), Duration);
-                    if (useFrom) t.From(ResolveColor(FromMode, FromColor), applyFromImmediately);
+                    var t = DOTween.To(() => read(), v => write(v), ResolveColor(ToMode, ToColorValue), Duration);
+                    if (useFrom) t.From(ResolveColor(FromMode, FromColorValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1621,9 +1653,9 @@ namespace rmf_claude.DOTweenUI
                     Func<string> read = member.Getter<string>();
                     Action<string> write = member.Setter<string>();
 
-                    var t = DOTween.To(() => read(), v => write(v), ResolveText(ToMode, ToText), Duration);
+                    var t = DOTween.To(() => read(), v => write(v), ResolveText(ToMode, ToTextValue), Duration);
                     t.SetOptions(true);
-                    if (useFrom) t.From(ResolveText(FromMode, FromText), applyFromImmediately);
+                    if (useFrom) t.From(ResolveText(FromMode, FromTextValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1637,8 +1669,8 @@ namespace rmf_claude.DOTweenUI
 
                     var t = DOTween.To(() => UIAnimationProperties.ParseNumber(read()),
                                        v => write(UIAnimationProperties.FormatNumber(v, format)),
-                                       ResolveFloat(ToMode, ToFloat), Duration);
-                    if (useFrom) t.From(ResolveFloat(FromMode, FromFloat), applyFromImmediately);
+                                       ResolveFloat(ToMode, ToFloatValue), Duration);
+                    if (useFrom) t.From(ResolveFloat(FromMode, FromFloatValue), applyFromImmediately);
                     else if (relative) t.SetRelative(true);
                     tween = t;
                     break;
@@ -1671,6 +1703,78 @@ namespace rmf_claude.DOTweenUI
 
             // FromFloat/ToFloat and the colours are deliberately left alone - 0 and transparent
             // are legitimate authored values (fading to 0 is the whole point of a Hide).
+        }
+
+        /// <summary>
+        /// Replaces this step's From (to = false) or To value with one set from code, for every build
+        /// from now on until ClearOverrides. The player's SetFrom / SetTo are the way in. The value
+        /// means exactly what a typed one would - the endpoint's mode still applies - and only the
+        /// value slot matching kind is read.
+        ///
+        /// Returns why the value was refused, or null. Only the kind of value the step already tweens
+        /// is taken, a whole number fitting where a number does: a mismatch is a mistake in the calling
+        /// code, and converting it would hide that.
+        /// </summary>
+        internal string OverrideEndpoint(bool to, UIAnimationValueKind kind, Vector3 vector, float number, Color color, string text)
+        {
+            UIAnimationValueKind own = Type == UIAnimationStepType.CustomProperty ? ValueKindOf(PropertyKind) : ValueKindOf(Type);
+
+            if (own == UIAnimationValueKind.None) return "a " + Type + " step has no From or To value";
+
+            if (own != kind && !(own == UIAnimationValueKind.Int && kind == UIAnimationValueKind.Float))
+            {
+                return "the step tweens a " + own + " value and was given a " + kind;
+            }
+
+            if (!to)
+            {
+                if (IsImpulse(Type)) return "a punch or shake has no From";
+
+                // Stored anyway, it would do nothing until someone turned From on in the Inspector -
+                // better to say so now than to leave a caller wondering why the start never moves.
+                if (!HasAuthoredStart)
+                {
+                    return "its From is off, so it starts from wherever the value already is. Turn From on " +
+                           "in the Inspector (the button reads FROM) to give it a From that code can replace";
+                }
+            }
+
+            EndpointOverride value = to ? toOverride : fromOverride;
+
+            switch (kind)
+            {
+                case UIAnimationValueKind.Vector:
+                    value.HasVector = true;
+                    value.Vector = vector;
+                    break;
+
+                case UIAnimationValueKind.Color:
+                    value.HasColor = true;
+                    value.Color = color;
+                    break;
+
+                case UIAnimationValueKind.Text:
+                    value.HasText = true;
+                    value.Text = text;
+                    break;
+
+                default:
+                    value.HasFloat = true;
+                    value.Float = number;
+                    break;
+            }
+
+            if (to) toOverride = value;
+            else fromOverride = value;
+
+            return null;
+        }
+
+        /// <summary>Goes back to the authored From and To values.</summary>
+        internal void ClearOverrides()
+        {
+            fromOverride = default(EndpointOverride);
+            toOverride = default(EndpointOverride);
         }
 
         /// <summary>Runs a SetActive step. The player calls this from a sequence callback.</summary>

@@ -6,7 +6,9 @@
 // Twindrill Goose team. See the README.md in the folder above for usage.
 // -----------------------------------------------------------------------------
 
+using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 
@@ -51,7 +53,7 @@ namespace rmf_claude.FlipbookAnimation
             var copy = frames.Copy();
             var count = copy.arraySize;
 
-            menu.AddSeparator("");
+            Separate(menu);
 
             if (count > 1)
             {
@@ -66,6 +68,36 @@ namespace rmf_claude.FlipbookAnimation
 
             if (count > 0) menu.AddItem(new GUIContent("Clear Frames"), false, () => Clear(copy));
             else menu.AddDisabledItem(new GUIContent("Clear Frames"));
+        }
+
+        /// <summary>
+        /// A divider before these entries, unless the menu already ends in one. Unity 6000.3 ends its
+        /// own part of every property menu with a divider before any handler runs (measured), so adding
+        /// one regardless drew two in a row on Windows. GenericMenu has no public way to read its items,
+        /// so this looks at its private list, and adds the divider anyway if that stops being readable.
+        /// </summary>
+        private static void Separate(GenericMenu menu)
+        {
+            if (menu.GetItemCount() == 0 || EndsWithSeparator(menu)) return;
+            menu.AddSeparator("");
+        }
+
+        private static FieldInfo menuItemsField;
+
+        private static bool EndsWithSeparator(GenericMenu menu)
+        {
+            if (menuItemsField == null)
+            {
+                menuItemsField = typeof(GenericMenu).GetField("m_MenuItems", BindingFlags.Instance | BindingFlags.NonPublic);
+            }
+
+            var items = menuItemsField != null ? menuItemsField.GetValue(menu) as IList : null;
+            if (items == null || items.Count == 0) return false;
+
+            var last = items[items.Count - 1];
+            var separator = last != null ? last.GetType().GetField("separator") : null;
+
+            return separator != null && separator.FieldType == typeof(bool) && (bool)separator.GetValue(last);
         }
 
         /// <summary>
