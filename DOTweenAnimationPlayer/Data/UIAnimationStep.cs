@@ -323,6 +323,18 @@ namespace rmf_claude.DOTweenUI
         [NonSerialized] private bool shaderPropertyValid;
         [NonSerialized] private bool targetPathMissed;
 
+        // Who resolved this step and which one it is ("Animation 'Show' step 2"), for warnings.
+        [NonSerialized] private GameObject owner;
+        [NonSerialized] private string where;
+
+        // A punch or shake's live tween and the value it started from, so UIAnimationPlayer.Kill can put
+        // one stopped part way back - see SettleImpulse.
+        [NonSerialized] private Tween impulseTween;
+        [NonSerialized] private RectTransform impulseRect;
+        [NonSerialized] private UIAnimationStepType impulseType;
+        [NonSerialized] private bool impulseStarted;
+        [NonSerialized] private Vector3 impulseStart;
+
         // From and To values set from code, through UIAnimationPlayer.SetFrom / SetTo. Kept beside the
         // authored values rather than written over them, so nothing a game does at runtime can reach
         // the Inspector's data and ClearOverrides has the authored value to go back to. Every read of
@@ -545,6 +557,17 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         public void Resolve(GameObject owner)
         {
+            Resolve(owner, null);
+        }
+
+        /// <summary>
+        /// Resolve, with which step this is - "Animation 'Show' step 2" - for any warning it gives.
+        /// </summary>
+        public void Resolve(GameObject owner, string where)
+        {
+            this.owner = owner;
+            this.where = where;
+
             // A filled slot wins outright and the path is never looked up. It is ignored, so it must
             // not be able to warn about - let alone skip - a step that has a perfectly good target.
             targetPathMissed = false;
@@ -582,9 +605,7 @@ namespace rmf_claude.DOTweenUI
 
                     if (Clip == null)
                     {
-                        Debug.LogWarning(
-                            "UIAnimationPlayer on '" + owner.name +
-                            "': a Play Sound step has no Clip assigned. It will be skipped.", owner);
+                        Warn("A STEP WILL BE SKIPPED.", "It is a Play Sound step with no Clip.");
                     }
                     break;
 
@@ -615,16 +636,23 @@ namespace rmf_claude.DOTweenUI
             targetPathMissed = true;
 
             // A sound's slot is optional by design, so a miss there falls back rather than skipping.
-            string consequence = TargetKindOf(Type) == UIAnimationTargetKind.Audio
-                ? "The sound will play on the shared UI source instead."
-                : "The step will be skipped.";
-
-            Debug.LogWarning(
-                "UIAnimationPlayer on '" + owner.name + "': a " + Type + " step has Target Path '" +
-                TargetPath + "', which matches nothing from '" + owner.name + "'. " + consequence,
-                owner);
+            Warn(TargetKindOf(Type) == UIAnimationTargetKind.Audio
+                    ? "A SOUND WILL PLAY ON THE SHARED UI SOURCE INSTEAD."
+                    : "A STEP WILL BE SKIPPED.",
+                "It is a " + Type + " step with Target Path '" + TargetPath + "', which matches nothing from '" +
+                owner.name + "'.");
 
             return null;
+        }
+
+        /// <summary>
+        /// A warning about this step, from the player that resolved it: the consequence first, then which
+        /// step, then details.
+        /// </summary>
+        private void Warn(string headline, string details)
+        {
+            UIAnimationLog.Warn(UIAnimationLog.Player(owner), headline,
+                (where != null ? where + ". " : string.Empty) + details, owner);
         }
 
         /// <summary>The step's own target slot for its current Type - the one the Inspector shows.</summary>
@@ -1045,6 +1073,10 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         public Tween BuildTween(bool applyFromImmediately, float frameRate, float timelineOffset, bool snapAll, string context)
         {
+            // Whatever the last build made is over by now, and DOTween may reuse the object.
+            impulseTween = null;
+            impulseStarted = false;
+
             if (IsInstant(Type)) return null;
             if (!HasTarget(context)) return null;
 
@@ -1232,8 +1264,93 @@ namespace rmf_claude.DOTweenUI
                     tween.SetEase(EaseType);
                 }
             }
+            else
+            {
+                TrackImpulse(tween);
+            }
 
             return tween;
+        }
+
+        /// <summary>
+        /// Notes where a punch or shake starts from, for SettleImpulse. Read in the tween's own OnStart,
+        /// which DOTween runs when the tween first starts inside its sequence, before it writes anything -
+        /// the same moment the punch reads the value it wobbles around. Once per build, loops included:
+        /// a punch works its points out once, so every loop wobbles around that same first value.
+        /// </summary>
+        private void TrackImpulse(Tween tween)
+        {
+            // What it drives is fixed at build time, like baselineType, so an Inspector edit mid-play
+            // can never write one property's start into another.
+            impulseTween = tween;
+            impulseRect = rect;
+            impulseType = Type;
+
+            tween.OnStart(() =>
+            {
+                if (!ReferenceEquals(impulseTween, tween) || impulseRect == null) return;
+
+                impulseStart = ReadImpulse(impulseRect, impulseType);
+                impulseStarted = true;
+            });
+        }
+
+        /// <summary>
+        /// Puts a punch or shake that is part way through back where it started, and forgets it. Called
+        /// by UIAnimationPlayer.Kill before it stops the animation.
+        ///
+        /// DOTween's punch and shake wobble around the value they start from and end back on it. Stopped
+        /// part way, the object is left displaced, and the next play wobbles around - and ends on - that
+        /// displaced value: three quick replays of a scale punch left an object at 2.19x (measured). Not
+        /// started yet, or already finished, it is where it began anyway, so nothing is written.
+        /// </summary>
+        public void SettleImpulse()
+        {
+            Tween tween = impulseTween;
+            bool started = impulseStarted;
+
+            impulseTween = null;
+            impulseStarted = false;
+
+            if (tween == null || !started || !tween.IsActive() || impulseRect == null) return;
+
+            float done = tween.ElapsedPercentage(false);
+            if (done <= 0f || done >= 1f) return;
+
+            switch (impulseType)
+            {
+                case UIAnimationStepType.PunchAnchoredPosition:
+                case UIAnimationStepType.ShakeAnchoredPosition:
+                    impulseRect.anchoredPosition = impulseStart;
+                    break;
+
+                case UIAnimationStepType.PunchRotation:
+                case UIAnimationStepType.ShakeRotation:
+                    impulseRect.localEulerAngles = impulseStart;
+                    break;
+
+                default:
+                    impulseRect.localScale = impulseStart;
+                    break;
+            }
+        }
+
+        /// <summary>The value a punch or shake of that type drives, as it stands.</summary>
+        private static Vector3 ReadImpulse(RectTransform target, UIAnimationStepType type)
+        {
+            switch (type)
+            {
+                case UIAnimationStepType.PunchAnchoredPosition:
+                case UIAnimationStepType.ShakeAnchoredPosition:
+                    return target.anchoredPosition;
+
+                case UIAnimationStepType.PunchRotation:
+                case UIAnimationStepType.ShakeRotation:
+                    return target.localEulerAngles;
+
+                default:
+                    return target.localScale;
+            }
         }
 
         /// <summary>
@@ -1432,7 +1549,7 @@ namespace rmf_claude.DOTweenUI
                 return;
             }
 
-            Debug.LogWarning("UIAnimationPlayer on '" + owner.name + "', Custom Property step: " + problem, owner);
+            Warn("A STEP WILL BE SKIPPED.", "It is a Custom Property step. " + problem);
         }
 
         /// <summary>
@@ -1481,9 +1598,10 @@ namespace rmf_claude.DOTweenUI
             }
             catch (Exception exception)
             {
-                Debug.LogWarning(
-                    "UIAnimationPlayer: reading " + UIAnimationProperties.Describe(PropertyComponent, PropertyMember, PropertyKind) +
-                    " threw " + exception.GetType().Name + " (" + exception.Message + "). The step will be skipped.",
+                UIAnimationLog.Warn(UIAnimationLog.Player(owner), "A STEP WILL BE SKIPPED.",
+                    (where != null ? where + ". " : string.Empty) + "Reading " +
+                    UIAnimationProperties.Describe(PropertyComponent, PropertyMember, PropertyKind) +
+                    " threw " + exception.GetType().Name + " (" + exception.Message + ").",
                     resolvedMember.Component);
 
                 resolvedMember = null;
@@ -1532,8 +1650,10 @@ namespace rmf_claude.DOTweenUI
             }
             catch (Exception exception)
             {
-                Debug.LogWarning("UIAnimationPlayer: putting back a Custom Property threw " + exception.GetType().Name +
-                                 " (" + exception.Message + ").", member.Component);
+                UIAnimationLog.Warn(UIAnimationLog.Player(owner), "A PROPERTY WAS NOT PUT BACK.",
+                    (where != null ? where + ". " : string.Empty) + "Writing its resting value back through " +
+                    UIAnimationProperties.Describe(PropertyComponent, PropertyMember, PropertyKind) + " threw " +
+                    exception.GetType().Name + " (" + exception.Message + ").", member.Component);
             }
         }
 
@@ -1841,9 +1961,7 @@ namespace rmf_claude.DOTweenUI
 
             if (string.IsNullOrEmpty(ShaderProperty))
             {
-                Debug.LogWarning(
-                    "UIAnimationPlayer on '" + owner.name + "': a " + Type +
-                    " step has no Shader Property name set. The step will be skipped.", owner);
+                Warn("A STEP WILL BE SKIPPED.", "It is a " + Type + " step with no Shader Property name.");
                 return;
             }
 
@@ -1853,10 +1971,8 @@ namespace rmf_claude.DOTweenUI
 
             if (!materialInstance.Material.HasProperty(shaderPropertyId))
             {
-                Debug.LogWarning(
-                    "UIAnimationPlayer on '" + owner.name + "': shader '" +
-                    materialInstance.Material.shader.name + "' has no property '" + ShaderProperty +
-                    "'. The step will be skipped.", owner);
+                Warn("A STEP WILL BE SKIPPED.", "It is a " + Type + " step, and shader '" +
+                    materialInstance.Material.shader.name + "' has no property '" + ShaderProperty + "'.");
                 return;
             }
 
@@ -1915,7 +2031,9 @@ namespace rmf_claude.DOTweenUI
                     break;
             }
 
-            Debug.LogWarning(context + ": " + Type + " step has no " + TargetKindOf(Type) + " target and was skipped.");
+            UIAnimationLog.Warn(UIAnimationLog.Player(owner), "A STEP WAS SKIPPED.",
+                (context ?? where) + ". It is a " + Type + " step, and it has no " + TargetKindOf(Type) + " target to drive.",
+                owner);
             return false;
         }
     }

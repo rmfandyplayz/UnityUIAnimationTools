@@ -251,7 +251,6 @@ namespace rmf_claude.DOTweenUI
         {
             var text = new StringBuilder();
 
-            text.Append("Mirrored animation '").Append(animation.Name).Append("'. ");
             text.Append(needsReview.Count == 1 ? "1 step had" : needsReview.Count + " steps had");
             text.Append(" no From (their FROM / TO button read TO), so there was no authored start to mirror onto. ");
             text.Append("Their To is now the resting value, which is the part worth checking: ");
@@ -264,14 +263,15 @@ namespace rmf_claude.DOTweenUI
                 text.Append(" (").Append(needsReview[i].Type).Append(")");
             }
 
-            Debug.LogWarning(text.ToString(), context);
+            UIAnimationLog.Warn("Mirrored animation '" + animation.Name + "'",
+                needsReview.Count == 1 ? "ONE STEP NEEDS CHECKING." : needsReview.Count + " STEPS NEED CHECKING.",
+                text.ToString(), context);
         }
 
         private static void ReportPaths(UIAnimation animation, List<UIAnimationStep> steps, Object context)
         {
             var text = new StringBuilder();
 
-            text.Append("Mirrored animation '").Append(animation.Name).Append("'. ");
             text.Append(steps.Count == 1 ? "1 step has" : steps.Count + " steps have");
             text.Append(" a movement path whose points follow a To mode the mirror changed, so they were " +
                         "reversed but are now read in a different space (Absolute vs Baseline). Check them: ");
@@ -284,7 +284,9 @@ namespace rmf_claude.DOTweenUI
                 text.Append(" (").Append(steps[i].Type).Append(")");
             }
 
-            Debug.LogWarning(text.ToString(), context);
+            UIAnimationLog.Warn("Mirrored animation '" + animation.Name + "'",
+                steps.Count == 1 ? "ONE PATH NEEDS CHECKING." : steps.Count + " PATHS NEED CHECKING.",
+                text.ToString(), context);
         }
 
         private static Color Negate(Color c)

@@ -108,7 +108,7 @@ namespace rmf_claude.DOTweenUI
         }
 
         /// <summary>
-        /// How much narrower than the whole view each step was last drawn, by property path.
+        /// How much narrower than the whole view each step was last drawn, by MarginKey.
         ///
         /// GetPropertyHeight is not told the width it will be drawn at, and the warning row wraps, so
         /// its height depends on that width. EditorGUIUtility.currentViewWidth IS live there, though,
@@ -123,10 +123,24 @@ namespace rmf_claude.DOTweenUI
 
         private const float GuessedViewMargin = 90f;
 
+        /// <summary>
+        /// The key a step's margin is kept under. One path can be on screen twice at different widths - a
+        /// player's own animation and one of its shared set's under Shared Animations, or the set in its
+        /// own Inspector - so the object and the view are part of it.
+        /// </summary>
+        private static string MarginKey(SerializedProperty property)
+        {
+            SerializedObject serialized = property.serializedObject;
+            UIAnimationPlayer viewer = UIAnimationSharedSection.PlayerOf(serialized);
+
+            return serialized.targetObject.GetInstanceID() + ":" + (viewer != null ? viewer.GetInstanceID() : 0) + ":" +
+                   property.propertyPath;
+        }
+
         public override float GetPropertyHeight(SerializedProperty property, GUIContent label)
         {
             float margin;
-            if (!viewMargins.TryGetValue(property.propertyPath, out margin)) margin = GuessedViewMargin;
+            if (!viewMargins.TryGetValue(MarginKey(property), out margin)) margin = GuessedViewMargin;
 
             float width = Mathf.Max(100f, EditorGUIUtility.currentViewWidth - margin);
 
@@ -143,10 +157,11 @@ namespace rmf_claude.DOTweenUI
             {
                 float margin = EditorGUIUtility.currentViewWidth - position.width;
                 float known;
+                string key = MarginKey(property);
 
-                if (!viewMargins.TryGetValue(property.propertyPath, out known) || !Mathf.Approximately(known, margin))
+                if (!viewMargins.TryGetValue(key, out known) || !Mathf.Approximately(known, margin))
                 {
-                    viewMargins[property.propertyPath] = margin;
+                    viewMargins[key] = margin;
                     HandleUtility.Repaint();
                 }
             }
@@ -1330,8 +1345,9 @@ namespace rmf_claude.DOTweenUI
             {
                 // Reflection wraps whatever the getter threw.
                 System.Exception cause = exception.InnerException ?? exception;
-                Debug.LogWarning("Reading " + UIAnimationProperties.Describe(component.GetType().FullName, member.Name, kind) +
-                                 " threw " + cause.GetType().Name + " (" + cause.Message + ").", component);
+                UIAnimationLog.Warn("Use Current Value", "NOTHING WAS COPIED.",
+                    "Reading " + UIAnimationProperties.Describe(component.GetType().FullName, member.Name, kind) +
+                    " threw " + cause.GetType().Name + " (" + cause.Message + ").", component);
                 return;
             }
 
@@ -1656,9 +1672,14 @@ namespace rmf_claude.DOTweenUI
 
         private static List<Ease> easeValues;
 
+        // Shown as the section headers of the Ease dropdown, after the ones with no direction.
+        private static readonly string[] EaseSectionNames = { null, "IN", "OUT", "IN OUT" };
+
         /// <summary>
-        /// DOTween's presets, in DOTween's own order, minus the three that are not choices: Unset
-        /// (which a new step is filled in from anyway) and the two INTERNAL_ values.
+        /// DOTween's presets minus the three that are not choices - Unset (which a new step is filled in
+        /// from anyway) and the two INTERNAL_ values - grouped by direction: Linear and Flash, then every
+        /// In, every Out, every In Out. DOTween's own order within a group (Sine, Quad, Cubic ...). Built
+        /// from the enum, so the stored numbers never move to make the menu read well.
         /// </summary>
         private static List<Ease> EaseValues
         {
@@ -1673,10 +1694,28 @@ namespace rmf_claude.DOTweenUI
                         if (ease == Ease.Unset || ease.ToString().StartsWith("INTERNAL", System.StringComparison.Ordinal)) continue;
                         easeValues.Add(ease);
                     }
+
+                    // List.Sort is not stable, so the enum's own number breaks ties.
+                    easeValues.Sort((a, b) =>
+                    {
+                        int bySection = EaseSection(a).CompareTo(EaseSection(b));
+                        return bySection != 0 ? bySection : ((int)a).CompareTo((int)b);
+                    });
                 }
 
                 return easeValues;
             }
+        }
+
+        /// <summary>0 for no direction, then 1 In, 2 Out, 3 In Out - read off the preset's name.</summary>
+        private static int EaseSection(Ease ease)
+        {
+            string name = ease.ToString();
+
+            if (name.StartsWith("InOut", System.StringComparison.Ordinal)) return 3;
+            if (name.StartsWith("In", System.StringComparison.Ordinal)) return 1;
+            if (name.StartsWith("Out", System.StringComparison.Ordinal)) return 2;
+            return 0;
         }
 
         private static string EaseName(Ease ease)
@@ -1718,9 +1757,19 @@ namespace rmf_claude.DOTweenUI
                     () => SetEase(curveTarget, easeTarget, true, current));
                 menu.AddSeparator(string.Empty);
 
+                int section = 0;
+
                 for (int i = 0; i < EaseValues.Count; i++)
                 {
                     Ease value = EaseValues[i];
+
+                    if (EaseSection(value) != section)
+                    {
+                        section = EaseSection(value);
+                        menu.AddSeparator(string.Empty);
+                        menu.AddDisabledItem(new GUIContent(EaseSectionNames[section]));
+                    }
+
                     menu.AddItem(new GUIContent(EaseName(value)), !mixed && !curve && value == current,
                         () => SetEase(curveTarget, easeTarget, false, value));
                 }

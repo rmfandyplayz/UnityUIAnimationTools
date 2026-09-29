@@ -97,6 +97,8 @@ namespace rmf_claude.DOTweenUI
 
             if (asset != null)
             {
+                KeepIds(asset, animations);
+
                 Undo.RecordObject(asset, "Save as Animation Set");
                 asset.Animations = animations;
                 EditorUtility.SetDirty(asset);
@@ -140,6 +142,9 @@ namespace rmf_claude.DOTweenUI
                     // The other types' slots too: invisible leftovers, which the asset would clear anyway.
                     step.ClearDirectTargets();
                 }
+
+                // An Id only means something inside a set; see KeepIds.
+                animation.Id = string.Empty;
 
                 DropSceneListeners(animation, report);
                 animations.Add(animation);
@@ -226,6 +231,19 @@ namespace rmf_claude.DOTweenUI
             }
         }
 
+        /// <summary>
+        /// Saving over a set gives each new animation the Id of the set's animation of the same name, so a
+        /// player's own On Complete for it (found by Id) survives the set being saved again.
+        /// </summary>
+        private static void KeepIds(UIAnimationAsset asset, List<UIAnimation> animations)
+        {
+            for (int i = 0; i < animations.Count; i++)
+            {
+                UIAnimation old = asset.Animations.Find(a => a != null && a.Name == animations[i].Name);
+                if (old != null) animations[i].Id = old.Id;
+            }
+        }
+
         // ---------------------------------------------------------------- helpers
 
         private static string RememberedFolder()
@@ -277,8 +295,15 @@ namespace rmf_claude.DOTweenUI
 
                 text.Append("\n'").Append(player.name).Append("' still has its own copies, and they win over the set's.");
 
-                if (Unreachable.Count > 0) Debug.LogWarning(text.ToString(), asset);
-                else Debug.Log(text.ToString(), asset);
+                if (Unreachable.Count == 0)
+                {
+                    Debug.Log(text.ToString(), asset);
+                    return;
+                }
+
+                UIAnimationLog.Warn("Save as Animation Set",
+                    Unreachable.Count == 1 ? "ONE STEP WON'T FIND ITS TARGET." : Unreachable.Count + " STEPS WON'T FIND THEIR TARGETS.",
+                    text.ToString(), asset);
             }
         }
     }

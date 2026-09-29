@@ -34,6 +34,9 @@ namespace rmf_claude.DOTweenUI
     ///                                       Save as Animation Set (see UIAnimationSetExport)
     ///   right-click the Steps list       -> Paste Step (add to end / mirrored)
     ///
+    /// Under a player's Shared Animations the set is read-only, so an animation there offers Copy and
+    /// Override, and a step Copy.
+    ///
     /// On a UIAnimationPlayer and on a UIAnimationAsset alike, so an animation can be copied out
     /// of a player and into a shared set or back. Pasting INTO an asset carries the source's
     /// target references with it, and UIAnimationAsset.OnValidate clears them - a scene reference
@@ -74,6 +77,16 @@ namespace rmf_claude.DOTweenUI
             // The property handed to this callback is only valid for the duration of the call,
             // and menu items run later. Copy it so the deferred handler has something to use.
             SerializedProperty captured = property.Copy();
+
+            UIAnimationPlayer viewer = UIAnimationSharedSection.PlayerOf(property.serializedObject);
+            if (viewer != null)
+            {
+                if (property.isArray) return;
+
+                if (property.type == AnimationTypeName) AddReadOnlyEntries(menu, captured, true, viewer);
+                else if (property.type == StepTypeName) AddReadOnlyEntries(menu, captured, false, viewer);
+                return;
+            }
 
             if (property.isArray)
             {
@@ -158,6 +171,55 @@ namespace rmf_claude.DOTweenUI
         }
 
         /// <summary>
+        /// A shared set's animation or step, shown under a player's Shared Animations: it can be copied,
+        /// and an animation can be overridden, but nothing here writes to the set.
+        /// </summary>
+        private static void AddReadOnlyEntries(GenericMenu menu, SerializedProperty element, bool isAnimation,
+            UIAnimationPlayer viewer)
+        {
+            KeepOnlyCopying(menu);
+            Separate(menu);
+            menu.AddItem(new GUIContent(isAnimation ? "Copy Animation" : "Copy Step"), false, () => Copy(element, isAnimation));
+
+            if (!isAnimation) return;
+
+            var overrideItem = new GUIContent("Override Animation");
+            string name = element.FindPropertyRelative("Name").stringValue;
+
+            if (viewer.EditorAnimations.Exists(a => a != null && a.Name == name)) menu.AddDisabledItem(overrideItem);
+            else menu.AddItem(overrideItem, false,
+                () => UIAnimationSharedSection.Override(viewer, new SerializedObject(viewer), ElementIndex(element)));
+        }
+
+        /// <summary>
+        /// Takes Unity's own editing entries - Paste, Duplicate Array Element, Delete Array Element - off
+        /// a menu for something read-only. They apply their change themselves, so greying the field out
+        /// does not stop them. Copy and Copy Property Path stay. (What Shared Animations draws is a copy
+        /// of the set anyway, so one that got through would change nothing real.)
+        /// </summary>
+        private static void KeepOnlyCopying(GenericMenu menu)
+        {
+            IList items = MenuItems(menu);
+            if (items == null) return;
+
+            for (int i = items.Count - 1; i >= 0; i--)
+            {
+                if (IsSeparator(items[i])) continue;
+
+                FieldInfo content = items[i] != null ? items[i].GetType().GetField("content") : null;
+                var label = content != null ? content.GetValue(items[i]) as GUIContent : null;
+
+                if (label == null || !label.text.StartsWith("Copy", System.StringComparison.Ordinal)) items.RemoveAt(i);
+            }
+
+            // A divider left at either end, or beside another, where the entries between went.
+            for (int i = items.Count - 1; i >= 0; i--)
+            {
+                if (IsSeparator(items[i]) && (i == 0 || i == items.Count - 1 || IsSeparator(items[i - 1]))) items.RemoveAt(i);
+            }
+        }
+
+        /// <summary>
         /// A divider before this tool's entries, unless the menu already ends in one. Unity 6000.3 ends
         /// its own part of every property menu with a divider before any handler runs (measured), so
         /// adding one regardless drew two in a row on Windows. GenericMenu has no public way to read
@@ -174,18 +236,25 @@ namespace rmf_claude.DOTweenUI
 
         private static bool EndsWithSeparator(GenericMenu menu)
         {
+            IList items = MenuItems(menu);
+            return items != null && items.Count > 0 && IsSeparator(items[items.Count - 1]);
+        }
+
+        /// <summary>GenericMenu's private item list, or null if that ever stops being readable.</summary>
+        private static IList MenuItems(GenericMenu menu)
+        {
             if (menuItemsField == null)
             {
                 menuItemsField = typeof(GenericMenu).GetField("m_MenuItems", BindingFlags.Instance | BindingFlags.NonPublic);
             }
 
-            var items = menuItemsField != null ? menuItemsField.GetValue(menu) as IList : null;
-            if (items == null || items.Count == 0) return false;
+            return menuItemsField != null ? menuItemsField.GetValue(menu) as IList : null;
+        }
 
-            object last = items[items.Count - 1];
-            FieldInfo separator = last != null ? last.GetType().GetField("separator") : null;
-
-            return separator != null && separator.FieldType == typeof(bool) && (bool)separator.GetValue(last);
+        private static bool IsSeparator(object item)
+        {
+            FieldInfo separator = item != null ? item.GetType().GetField("separator") : null;
+            return separator != null && separator.FieldType == typeof(bool) && (bool)separator.GetValue(item);
         }
 
         // ---------------------------------------------------------------- commands
@@ -207,6 +276,9 @@ namespace rmf_claude.DOTweenUI
         {
             object value = Rebuild(isAnimation);
             if (value == null) return;
+
+            // Pasted over, it is still the same animation to any player with its own On Complete for it.
+            if (isAnimation) ((UIAnimation)value).Id = element.FindPropertyRelative("Id").stringValue;
 
             element.boxedValue = value;
             element.serializedObject.ApplyModifiedProperties();
@@ -236,6 +308,7 @@ namespace rmf_claude.DOTweenUI
 
             UIAnimationMirror.Mirror(animation, element.serializedObject.targetObject);
             animation.Name = animation.Name + " Mirrored";
+            animation.Id = string.Empty;
 
             AddToEnd(list, animation, true);
         }
@@ -341,11 +414,19 @@ namespace rmf_claude.DOTweenUI
             return FromJson(JsonUtility.ToJson(element.boxedValue), isAnimation);
         }
 
-        /// <summary>Deserializes the clipboard onto a fresh instance.</summary>
+        /// <summary>
+        /// Deserializes the clipboard onto a fresh instance. A pasted animation is a new one, so it does not
+        /// keep the Id of the one it was copied from - players find their own On Complete for a shared
+        /// animation by it (Paste over an existing one puts that one's back).
+        /// </summary>
         private static object Rebuild(bool isAnimation)
         {
             if (!HasCopy(isAnimation)) return null;
-            return FromJson(isAnimation ? animationJson : stepJson, isAnimation);
+
+            object value = FromJson(isAnimation ? animationJson : stepJson, isAnimation);
+            if (isAnimation) ((UIAnimation)value).Id = string.Empty;
+
+            return value;
         }
 
         /// <summary>

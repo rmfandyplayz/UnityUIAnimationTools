@@ -124,13 +124,15 @@ namespace rmf_claude.FlipbookAnimation
         {
             if (Flipbook == null)
             {
-                Debug.LogWarning("[UIFlipbookSelectable] " + name + " has no UISpriteFlipbook to drive.", this);
+                Debug.LogWarning("<b>[UIFlipbookSelectable] " + name + ": NOTHING WILL ANIMATE.</b> " +
+                                 "It has no UISpriteFlipbook to drive.", this);
                 return;
             }
 
             if (Target == null)
             {
-                Debug.LogWarning("[UIFlipbookSelectable] " + name + " has no Selectable, so it will sit on Disabled.", this);
+                Debug.LogWarning("<b>[UIFlipbookSelectable] " + name + ": IT WILL STAY ON THE DISABLED CLIP.</b> " +
+                                 "It has no Selectable to follow.", this);
             }
         }
 
@@ -338,9 +340,9 @@ namespace rmf_claude.FlipbookAnimation
             // are still looking at the component.
             if (Target != null && Target.transition == Selectable.Transition.SpriteSwap)
             {
-                Debug.LogWarning("[UIFlipbookSelectable] " + name + ": the Selectable Transition is " +
-                                 "Sprite Swap, which writes Image.sprite itself and will fight the " +
-                                 "flipbook. Set Transition to None (or Color Tint).", this);
+                Debug.LogWarning("<b>[UIFlipbookSelectable] " + name + ": THE BUTTON WILL FIGHT THE FLIPBOOK.</b> " +
+                                 "The Selectable's Transition is Sprite Swap, which writes Image.sprite itself. " +
+                                 "Set Transition to None (or Color Tint).", this);
             }
         }
 

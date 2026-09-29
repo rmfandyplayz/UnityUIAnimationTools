@@ -70,7 +70,8 @@ namespace rmf_claude.FlipbookAnimation
 
             if (image == null)
             {
-                Debug.LogWarning("[UIFlipbookPreview] " + flipbook.name + " has no Image to draw into.", flipbook);
+                Debug.LogWarning("<b>[UIFlipbookPreview] " + flipbook.name + ": NOTHING TO PREVIEW.</b> " +
+                                 "It has no Image to draw into.", flipbook);
                 return;
             }
 

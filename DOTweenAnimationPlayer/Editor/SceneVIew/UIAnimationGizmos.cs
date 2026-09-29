@@ -208,11 +208,13 @@ namespace rmf_claude.DOTweenUI
                 Collect(animations[a], owner, steps, Mode == ShowMode.ExpandedSteps, serialized.targetObject == owner ? a : -1);
             }
 
-            // A player also plays whatever its Shared asset adds, and All Animations means all of it.
-            // Nothing in the player's inspector says whether those are expanded, so they are only
-            // drawn in that mode.
+            // A player also plays whatever its Shared asset adds, minus what its own animations override.
+            // All Animations means all of it; otherwise what is expanded under Shared Animations says,
+            // through the player's view of the set.
             var player = serialized.targetObject as UIAnimationPlayer;
-            if (Mode == ShowMode.AllAnimations && player != null && player.EditorShared != null)
+            SerializedObject view = player != null ? UIAnimationSharedSection.ViewOf(player) : null;
+
+            if (player != null && player.EditorShared != null && (Mode == ShowMode.AllAnimations || view != null))
             {
                 localNames.Clear();
                 for (int a = 0; a < animations.Count; a++)
@@ -220,11 +222,18 @@ namespace rmf_claude.DOTweenUI
                     if (animations[a] != null) localNames.Add(animations[a].Name);
                 }
 
+                SerializedProperty sharedList = view != null ? view.FindProperty("Animations") : null;
                 List<UIAnimation> shared = player.EditorShared.Animations;
+
                 for (int a = 0; a < shared.Count; a++)
                 {
                     if (shared[a] == null || localNames.Contains(shared[a].Name)) continue;
-                    Collect(shared[a], owner, null, false, -1);
+
+                    SerializedProperty element = sharedList != null && a < sharedList.arraySize ? sharedList.GetArrayElementAtIndex(a) : null;
+                    if (Mode != ShowMode.AllAnimations && !IsOpen(sharedList, element)) continue;
+
+                    Collect(shared[a], owner, element != null ? element.FindPropertyRelative("Steps") : null,
+                        Mode == ShowMode.ExpandedSteps, -1);
                 }
             }
 

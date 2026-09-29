@@ -20,7 +20,7 @@ namespace rmf_claude.DOTweenUI
     /// when the same Show/Hide is on enough objects that retuning them by hand stops being
     /// reasonable - every panel in a menu, say.
     ///
-    /// Assign it to a player's Shared slot. The player plays its own animations AND these, and a
+    /// Assign it to a player's Shared Anim. Asset slot. The player plays its own animations AND these, and a
     /// local animation of the same name wins, so one object can override a single animation out
     /// of the set without leaving it.
     ///
@@ -47,7 +47,31 @@ namespace rmf_claude.DOTweenUI
                 ClearSceneTargets(animation);
             }
 
+            ForgetCopiedIds();
             WarnDuplicateNames();
+        }
+
+        /// <summary>
+        /// Clears the Id of any animation that shares one with an animation above it. An animation added
+        /// with + or Duplicate is a copy of one already in the list, Id and all, and players find their
+        /// own On Complete for a shared animation by Id - so a copy keeping it would pick up the
+        /// original's. The copy is always the lower of the two, and gets its own Id when a player first
+        /// needs one. (Pasting, which can land above the original, clears the Id itself.)
+        /// </summary>
+        private void ForgetCopiedIds()
+        {
+            for (int i = 0; i < Animations.Count; i++)
+            {
+                if (Animations[i] == null || string.IsNullOrEmpty(Animations[i].Id)) continue;
+
+                for (int j = 0; j < i; j++)
+                {
+                    if (Animations[j] == null || Animations[j].Id != Animations[i].Id) continue;
+
+                    Animations[i].Id = string.Empty;
+                    break;
+                }
+            }
         }
 
         /// <summary>
@@ -69,11 +93,10 @@ namespace rmf_claude.DOTweenUI
                 UIAnimationStep step = animation.Steps[s];
                 if (step == null || !step.ClearDirectTargets()) continue;
 
-                Debug.LogWarning(
-                    "[UIAnimationAsset] " + name + ": animation '" + animation.Name + "' step " + s +
-                    " had a target assigned directly. A shared asset cannot hold a scene reference, " +
-                    "so the slot has been cleared. Use Target Path to reach a child, or leave it " +
-                    "empty to use whichever GameObject the player is on.", this);
+                UIAnimationLog.Warn("Animation set '" + name + "'", "A TARGET WAS REMOVED.",
+                    "Animation '" + animation.Name + "' step " + s + " had a target assigned directly, and a " +
+                    "shared set cannot hold a scene reference, so the slot has been cleared. Use Target Path " +
+                    "to reach a child, or leave it empty to use whichever GameObject the player is on.", this);
             }
         }
 
@@ -92,9 +115,9 @@ namespace rmf_claude.DOTweenUI
                 {
                     if (Animations[j] == null || Animations[j].Name != Animations[i].Name) continue;
 
-                    Debug.LogWarning(
-                        "[UIAnimationAsset] " + name + ": duplicate animation name '" + Animations[i].Name +
-                        "'. The first one wins and the other cannot be played.", this);
+                    UIAnimationLog.Warn("Animation set '" + name + "'", "AN ANIMATION CAN'T BE PLAYED.",
+                        "Two animations are named '" + Animations[i].Name + "'. Play always finds the first " +
+                        "one, so the other never runs.", this);
                     break;
                 }
             }

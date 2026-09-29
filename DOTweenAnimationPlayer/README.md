@@ -24,6 +24,16 @@ Nothing in the folder is left in the global namespace, so it cannot collide with
 
 **Don't add an `.asmdef`** to this folder unless you know what you're doing. Those generated modules land in `Assembly-CSharp-firstpass`, and an assembly definition cannot reference a predefined assembly — so adding one silently removes every DOTween UI shortcut this framework is built on.
 
+What's where:
+
+| Folder | Holds |
+|---|---|
+| *(top level)* | `UIAnimationPlayer` and `UIMaterialInstance` — the two components you add |
+| `Data/` | What you author: an animation, a step, and the shared Animation Set asset |
+| `Helpers/` | Sound, Custom Property lookup, stepped easing, warnings |
+| `Attributes/` | The attributes behind the Inspector's one-row controls |
+| `Editor/` | Editor only — `Inspectors/`, `Drawers/`, `SceneView/` (gizmos and the path editor) and `Menus/` (right-click commands) |
+
 ---
 
 ## Components
@@ -78,6 +88,8 @@ These jolt a property and let it settle back to where it started, so they have n
 | `Elasticity` / `Randomness` | How far it may overshoot past its start (0–1) | How random the direction is, in degrees |
 
 **On UI, rotate around Z only.** `PunchRotation` and `ShakeRotation` take a strength per axis so you can leave X and Y at `0` — turning around those tips a flat element over in 3D. `(0, 0, 15)` is a firm shake. `ShakeScale` takes one per axis for the same reason: `(0.25, 0.25, 0)` wobbles without distorting.
+
+**Cut short, a punch or shake goes back to where it started.** A punch wobbles around wherever the object was when it began. Stopped part way — played again, `Stop`, another animation's Interrupt Others at `STOP`, or a disable — it would otherwise stay wherever the wobble had got to, and the next one would wobble around *that*: spamming a button with a scale punch on it left the button at 2.19× after three quick presses. So the player puts it back first. One that hasn't started yet, or has finished, is already where it began.
 
 ### Sizing a RectTransform
 
@@ -171,7 +183,7 @@ Per-step **Delay** works with both. Read the step list top to bottom and that's 
 
 Each step uses one of two easing sources:
 
-- **Ease** — a DOTween preset. `Out*` eases decelerate into the end value and suit most UI.
+- **Ease** — a DOTween preset. `Out*` eases decelerate into the end value and suit most UI. The dropdown lists `Linear` and `Flash` first, then every `In`, every `Out` and every `In Out` ease, each group in DOTween's own order (Sine, Quad, Cubic …).
 - **Custom Curve** — the first entry in the same Ease dropdown. Pick it and a **Curve** row appears under Ease for an `AnimationCurve`; pick a preset again to switch back. The preset you had is remembered underneath, and so is the curve.
 
 For the curve, time runs 0→1 left to right, and value `0` = the FROM value, `1` = the TO value. Going above 1 or below 0 overshoots, which is how you build a bounce or an anticipation dip.
@@ -449,6 +461,7 @@ Right-click a header in the Inspector:
 | A **step** header | `Copy Step` · `Paste Step (overwrite)` · `Paste Step Above` · `Paste Step Below` · `Mirror Step` |
 | The **Animations** list | `Paste Animation (add to end)` · `Paste Animation Mirrored (add to end)` · on a player, `Save as Animation Set...` (see [Turning a player's animations into a set](#turning-a-players-animations-into-a-set)) |
 | The **Steps** list | `Paste Step (add to end)` · `Paste Step Mirrored (add to end)` |
+| An animation or step under **Shared Animations** | `Copy Animation` · `Override Animation` / `Copy Step` — read-only there, so nothing that would change the set (see [Shared Animations in the player's Inspector](#shared-animations-in-the-players-inspector)) |
 
 **Above / Below insert a new element** and shuffle the rest down, rather than overwriting the one you right-clicked — that's how you land a step in the middle of a list without adding a blank one at the end and dragging it up. The pasted `Start` mode comes across as copied, so pasting a `With Previous` step into a group is how you widen it.
 
@@ -515,17 +528,29 @@ A movement path has a similar limit. Its points follow `To`'s mode, and two case
 
 Right-click copy/paste moves an animation between objects, but it makes a **copy** — retune the original and the forty copies stay as they were. When that stops being reasonable, put the animation in a **UI Animation Set** instead.
 
-`Create → UI Animation → Animation Set` makes one. It holds the same list of animations, authored in the same inspector. Assign it to a player's **Shared** slot and that player can play everything in it.
+`Create → UI Animation → Animation Set` makes one. It holds the same list of animations, authored in the same inspector. Assign it to a player's **Shared Anim. Asset** slot and that player can play everything in it.
 
 ```
 UI Animation Player
   Use Unscaled Time                ✔
   Kill On Disable                  ✔
-  Shared                           Menu Panels (UI Animation Set)   ← the library
+  Shared Anim. Asset               Menu Panels (UI Animation Set)   ← the library
   Animations                       0                                ← plus anything local
+  Shared Animations (Menu Panels)  4                                ← what the set adds, read-only
 ```
 
-**Local animations win.** A player plays its own list first and then everything from the set whose name it hasn't already used, so one panel can override just the `Show` out of a shared set while still getting the shared `Hide`, `Press` and `Attention`. That override is the point of the feature, and both sides say when it happens — the player's inspector lists the names it overrides, and the asset's inspector warns when its Preview On player shadows one — because otherwise you can spend ten minutes tuning a curve that never plays.
+(In code the field is still called `Shared`: renaming it would empty the slot on every player already saved with one.)
+
+**Local animations win.** A player plays its own list first and then everything from the set whose name it hasn't already used, so one panel can override just the `Show` out of a shared set while still getting the shared `Hide`, `Press` and `Attention`. That override is the point of the feature, and both sides say when it happens — a small grey **overrides shared** at the end of the player's own animation, **overridden locally** on the set's under Shared Animations, a note above the preview listing the names, and a warning in the set's own inspector when its Preview On player shadows one — because otherwise you can spend ten minutes tuning a curve that never plays.
+
+### Shared Animations in the player's Inspector
+
+Once a player has a set, **Shared Animations** appears under its own Animations: every animation the set adds, always as the set has it now. Open one and it reads exactly like the player's own — steps, eases, targets — but greyed out: the set is edited in the set's own Inspector, where a change reaches every player using it. Two things here belong to this player:
+
+- **On Complete On This Player.** Each shared animation can have an On Complete of its own on each player — the same `Show` on every panel, and something different after it on each. Press **Add On Complete On This Player** under the animation, then fill it in like any UnityEvent; it can reach this player's scene, which the set's own On Complete can't. It runs after the set's own. **Renaming the animation in the set keeps it** — it follows the animation, not the name (a hidden Id each set animation gets the first time a player needs one). If the animation is deleted from the set, or the player's set is swapped, a note under the list names the leftovers, with a **Remove** button.
+- **Override.** The button at the end of a shared animation's header copies it into this player's own Animations, expanded and ready to edit. The copy wins over the set's from then on, and this player's On Complete for it moves onto the copy, after the set's own listeners, so nothing it did is lost. Other players are unaffected. Right-clicking a shared animation offers the same, as `Override Animation`, beside `Copy Animation`.
+
+The steps are checked against **this** player, not the set's Preview On — this is the scene they'll run in — so a shared step that does nothing on this particular player shows its ⚠ here. Scene gizmos follow what's expanded under Shared Animations the same way they follow your own.
 
 This is opt-in and it is not the default. Authoring straight onto the player is fewer clicks and is right for anything only one object does.
 
@@ -537,7 +562,7 @@ Author on one button first, then **right-click its Animations list → `Save as 
 - **A target it can't reach by name** — under another root object, or sharing its name with a sibling — gets its path from the scene root instead. That misses when played, so the step warns and does nothing rather than animating something else. The Console lists each one.
 - **On Complete listeners on scene objects are left out**, since a set can't hold them. Listeners on other assets stay.
 - **Where it saves:** the dialog starts in the folder you last saved a set to this session, or `Assets/ScriptableObjects` if there is one, or `Assets`. Once you've saved one, the menu also offers **`Save as Animation Set in '<folder>'`**, which saves straight there with a unique name and no dialog. That folder lasts until Unity closes; saving through the dialog somewhere else changes it.
-- **Saving over an existing set** replaces its animations but keeps the asset itself, so every Shared slot already pointing at it keeps working.
+- **Saving over an existing set** replaces its animations but keeps the asset itself, so every Shared Anim. Asset slot already pointing at it keeps working, and each animation keeps the hidden Id of the one it replaces by name, so players' own On Complete for it keep working too.
 
 ### What an asset can't hold
 
@@ -547,7 +572,7 @@ If a step arrives with a target anyway — pasting one copied off a player carri
 
 ### Previewing a set
 
-An animation set has nothing of its own to animate, so its inspector borrows a scene player: drop one into **Preview On** and the Play / Reset / Stop buttons run the ordinary player preview, with the same capture, restore, Undo entry and one-at-a-time rule. The player has to actually have the set in its Shared slot — it plays what its own merge produced, not what any asset happens to contain. With the slot empty, or holding a player that doesn't use the set, no buttons are drawn and a message says why.
+An animation set has nothing of its own to animate, so its inspector borrows a scene player: drop one into **Preview On** and the Play / Reset / Stop buttons run the ordinary player preview, with the same capture, restore, Undo entry and one-at-a-time rule. The player has to actually have the set in its Shared Anim. Asset slot — it plays what its own merge produced, not what any asset happens to contain. With the slot empty, or holding a player that doesn't use the set, no buttons are drawn and a message says why.
 
 The Preview On slot is not saved into the asset. It couldn't be: a scene reference is the one thing an asset cannot keep, which is what the whole feature is working around. It is remembered per asset until Unity recompiles or restarts, so selecting something else and coming back finds it still set.
 
@@ -618,6 +643,16 @@ Where each step starts comes from replaying the animation from rest, the way the
 ## Notes
 
 Each animation has a free-text **`Notes`** box. Nothing reads it — it's for you: what this animates, what plays it, why that one weird delay is there. It travels with copy/paste and mirroring like any other field.
+
+---
+
+## Console warnings
+
+Every warning this tool logs leads with who and what's going to happen, in bold, the consequence in capitals — then the details:
+
+> **UIAnimationPlayer on 'Panel': A STEP WILL BE SKIPPED.** Animation 'Show' step 2. It is a GraphicAlpha step with Target Path 'Icon', which matches nothing from 'Panel'.
+
+Click one to ping the object it's about. Problems with a step's target, clip or shader property are found once, when the player wakes, so they appear as play mode starts rather than on every `Play`.
 
 ---
 
@@ -774,7 +809,7 @@ Interrupt Others    ✔  [COMPLETE] [REPORT]
 - **Completing runs the `SetActive` steps still ahead, but not the sounds** — a jump to the end shouldn't fire every sound it skipped over at once.
 - **An endless loop (`Loops -1`) has no end**, so it stops where it stands either way, and reports `Interrupted`.
 - **Anything a reported `On Complete` starts is stopped**, so the interrupting animation still ends up the only one running. See the chaining note under [From UnityEvents](#from-unityevents).
-- **Playing an animation that is already running always stops it where it stands, whatever its buttons say** — they're about the others. Completing it first would make it start over from its own end, where a step without a From has nowhere left to go. So a count-up played again mid-count carries on from the number on screen: keep the real total in your own code and `SetTo` that, rather than reading the number back off the screen.
+- **Playing an animation that is already running always stops it where it stands, whatever its buttons say** — they're about the others. Completing it first would make it start over from its own end, where a step without a From has nowhere left to go. So a count-up played again mid-count carries on from the number on screen: keep the real total in your own code and `SetTo` that, rather than reading the number back off the screen. (A punch or shake caught part way is the exception: it goes back to where it started — see [Punch and shake](#punch-and-shake).)
 - **`Stop(name, complete: true)` and `StopAll(true)` finish the same way as `COMPLETE` `REPORT`**: `SetActive` steps run, sounds don't, `On Complete` fires, and an endless loop stops where it stands (reporting `Stopped`). `StopAll(true)` also stops anything their `On Complete` starts, so nothing is left running.
 - **A new animation starts with Interrupt Others ticked, at `COMPLETE` `REPORT`.** Anything authored before these buttons existed reads `STOP`, which is exactly what it always did, so nothing already in a scene or a shared set changes until you click.
 

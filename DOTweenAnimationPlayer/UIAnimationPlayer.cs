@@ -73,12 +73,20 @@ namespace rmf_claude.DOTweenUI
         [Tooltip("Kill running animations when this GameObject is disabled. Completion callbacks do not fire.")]
         [SerializeField] private bool KillOnDisable = true;
 
-        [Tooltip("Optional shared animation library. Animations from the asset are added to the ones " +
-                 "below, and a local animation of the same name wins - that is how one object overrides " +
-                 "a single animation out of a shared set. Leave it empty and nothing changes.")]
+        // Shown as "Shared Anim. Asset". The field keeps its name: renaming it would empty the slot on
+        // every player already saved with one.
+        [Tooltip("Optional shared animation set. Its animations are added to the ones below, and a local " +
+                 "animation of the same name wins - that is how one object overrides a single animation " +
+                 "out of a shared set. Leave it empty and nothing changes.\n\n" +
+                 "The set's animations are listed under Shared Animations, below this player's own.")]
         [SerializeField] private UIAnimationAsset Shared;
 
         [SerializeField] private List<UIAnimation> Animations = new List<UIAnimation>();
+
+        // This player's own On Complete for animations from Shared, one entry per animation that has
+        // one. Drawn beside the animation it belongs to, under Shared Animations.
+        [HideInInspector]
+        [SerializeField] private List<UIAnimationSharedOnComplete> SharedOnComplete = new List<UIAnimationSharedOnComplete>();
 
         private readonly Dictionary<string, int> lookup = new Dictionary<string, int>();
 
@@ -224,6 +232,7 @@ namespace rmf_claude.DOTweenUI
                 // Nothing to play. Fire the callbacks anyway so caller logic never hangs.
                 if (onComplete != null) onComplete.Invoke();
                 if (animation.OnComplete != null) animation.OnComplete.Invoke();
+                if (animation.PlayerOnComplete != null) animation.PlayerOnComplete.Invoke();
                 if (onEnd != null) onEnd.Invoke(UIAnimationEndReason.Completed);
                 return null;
             }
@@ -264,6 +273,7 @@ namespace rmf_claude.DOTweenUI
 
                 if (callback != null) callback.Invoke();
                 if (captured.OnComplete != null) captured.OnComplete.Invoke();
+                if (captured.PlayerOnComplete != null) captured.PlayerOnComplete.Invoke();
 
                 fire(UIAnimationEndReason.Completed);
             });
@@ -484,18 +494,17 @@ namespace rmf_claude.DOTweenUI
 
             if (stepIndex < 0 || stepIndex >= animation.Steps.Count)
             {
-                Debug.LogWarning(
-                    "UIAnimationPlayer on '" + name + "': " + method + " asked for step " + stepIndex + " of animation '" +
-                    animationName + "', which has " + animation.Steps.Count + " (numbered from 0).", this);
+                UIAnimationLog.Warn(UIAnimationLog.Player(this), method.ToUpperInvariant() + " WAS IGNORED.",
+                    "It asked for step " + stepIndex + " of animation '" + animationName + "', which has " +
+                    animation.Steps.Count + " (numbered from 0).", this);
                 return false;
             }
 
             string problem = animation.Steps[stepIndex].OverrideEndpoint(to, kind, vector, number, color, text);
             if (problem == null) return true;
 
-            Debug.LogWarning(
-                "UIAnimationPlayer on '" + name + "': " + method + " on animation '" + animationName + "' step " +
-                stepIndex + " was ignored - " + problem + ".", this);
+            UIAnimationLog.Warn(UIAnimationLog.Player(this), method.ToUpperInvariant() + " WAS IGNORED.",
+                "Animation '" + animationName + "' step " + stepIndex + ": " + problem + ".", this);
             return false;
         }
 
@@ -515,13 +524,14 @@ namespace rmf_claude.DOTweenUI
 
                 if (string.IsNullOrEmpty(animation.Name))
                 {
-                    Debug.LogWarning("UIAnimationPlayer on '" + name + "': animation " + i + " has no name.", this);
+                    UIAnimationLog.Warn(UIAnimationLog.Player(this), "AN ANIMATION CAN'T BE PLAYED.",
+                        "Animation " + i + " has no name, and Play finds animations by name.", this);
                 }
                 else if (lookup.ContainsKey(animation.Name))
                 {
-                    Debug.LogWarning(
-                        "UIAnimationPlayer on '" + name + "': duplicate animation name '" + animation.Name +
-                        "'. The first one wins.", this);
+                    UIAnimationLog.Warn(UIAnimationLog.Player(this), "AN ANIMATION CAN'T BE PLAYED.",
+                        "Two animations are named '" + animation.Name + "'. Play always finds the first one, " +
+                        "so the other never runs.", this);
                 }
                 else
                 {
@@ -531,7 +541,7 @@ namespace rmf_claude.DOTweenUI
                 List<UIAnimationStep> steps = animation.Steps;
                 for (int s = 0; s < steps.Count; s++)
                 {
-                    steps[s].Resolve(gameObject);
+                    steps[s].Resolve(gameObject, StepName(animation, s));
                 }
             }
 
@@ -577,8 +587,29 @@ namespace rmf_claude.DOTweenUI
 
                 if (HasLocal(source.Name)) continue;
 
-                runtime.Add(source.CloneForRuntime());
+                UIAnimation clone = source.CloneForRuntime();
+                clone.PlayerOnComplete = SharedOnCompleteFor(source.Id);
+                runtime.Add(clone);
             }
+        }
+
+        /// <summary>This player's own On Complete for the set's animation with that Id, or null.</summary>
+        private UnityEngine.Events.UnityEvent SharedOnCompleteFor(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return null;
+
+            for (int i = 0; i < SharedOnComplete.Count; i++)
+            {
+                UIAnimationSharedOnComplete entry = SharedOnComplete[i];
+                if (entry != null && entry.AnimationId == id) return entry.OnComplete;
+            }
+
+            return null;
+        }
+
+        private static string StepName(UIAnimation animation, int index)
+        {
+            return "Animation '" + animation.Name + "' step " + index;
         }
 
         private bool HasLocal(string animationName)
@@ -644,9 +675,8 @@ namespace rmf_claude.DOTweenUI
                 }
                 else
                 {
-                    string context = "UIAnimationPlayer on '" + name + "' animation '" + animation.Name + "' step " + i;
                     Tween tween = step.BuildTween(animation.ApplyFromValuesImmediately, frameRate, at,
-                        animation.SnapsEveryStep, context);
+                        animation.SnapsEveryStep, StepName(animation, i));
                     if (tween == null) continue;
 
                     sequence.Insert(at, tween);
@@ -692,8 +722,10 @@ namespace rmf_claude.DOTweenUI
         }
 
         /// <summary>
-        /// Stops an animation where it stands. Finish is the other way to end one, jumping it to its
-        /// end state first - see there for why that is not a kill with DOTween's complete flag.
+        /// Stops an animation where it stands - except a punch or shake caught part way, which goes back
+        /// to where it started (see UIAnimationStep.SettleImpulse). Finish is the other way to end one,
+        /// jumping it to its end state first - see there for why that is not a kill with DOTween's
+        /// complete flag.
         /// </summary>
         private void Kill(UIAnimation animation, UIAnimationEndReason reason)
         {
@@ -711,7 +743,19 @@ namespace rmf_claude.DOTweenUI
             animation.RuntimeSequence = null;
             animation.RuntimeCallback = null;
 
-            if (sequence.IsActive()) sequence.Kill();
+            if (sequence.IsActive())
+            {
+                // A punch or shake stopped part way would stay wherever its wobble had got to, and the
+                // next one wobbles around that - spamming a button grew the object. Put it back where it
+                // started first. Last step first, so where two overlap the earlier one's start wins.
+                List<UIAnimationStep> steps = animation.Steps;
+                for (int s = steps.Count - 1; s >= 0; s--)
+                {
+                    steps[s].SettleImpulse();
+                }
+
+                sequence.Kill();
+            }
 
             if (armed == null) return;
 
@@ -839,7 +883,9 @@ namespace rmf_claude.DOTweenUI
             UIAnimation animation = FindQuiet(animationName);
             if (animation == null)
             {
-                Debug.LogWarning("UIAnimationPlayer on '" + name + "': no animation named '" + animationName + "'.", this);
+                UIAnimationLog.Warn(UIAnimationLog.Player(this), "NOTHING HAPPENED - NO SUCH ANIMATION.",
+                    "There is no animation named '" + animationName + "' in its Animations or its Shared Anim. " +
+                    "Asset. Names are case-sensitive.", this);
             }
 
             return animation;
@@ -1011,5 +1057,25 @@ namespace rmf_claude.DOTweenUI
             }
         }
     #endif
+    }
+
+    /// <summary>
+    /// One player's own On Complete for an animation from its shared animation set: the same animation
+    /// on every player, and something different after it on each.
+    ///
+    /// It finds its animation by the animation's Id rather than its name, so renaming the animation in
+    /// the set keeps it. It runs after the set's own On Complete, which can only reach other assets.
+    /// </summary>
+    [Serializable]
+    public class UIAnimationSharedOnComplete
+    {
+        [Tooltip("The Id of the shared animation this belongs to.")]
+        public string AnimationId;
+
+        [Tooltip("What the animation was called when this was last edited. Only used to name it once the " +
+                 "animation has gone from the set.")]
+        public string AnimationName;
+
+        public UnityEngine.Events.UnityEvent OnComplete;
     }
 }

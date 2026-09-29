@@ -51,7 +51,7 @@ namespace rmf_claude.DOTweenUI
 
         public override void OnInspectorGUI()
         {
-            DrawDefaultInspector();
+            DrawFields();
 
             if (targets.Length > 1) return;
 
@@ -94,6 +94,48 @@ namespace rmf_claude.DOTweenUI
             if (sceneSerialized == null) return;
 
             UIAnimationGizmos.Draw(sceneSerialized, (UIAnimationPlayer)target);
+        }
+
+        private static readonly GUIContent SharedLabel = new GUIContent("Shared Anim. Asset");
+
+        /// <summary>
+        /// What DrawDefaultInspector draws, field for field, with two changes: the Shared field is labelled
+        /// "Shared Anim. Asset" (its serialized name cannot change without emptying every saved slot), and
+        /// Shared Animations follows the Animations list.
+        /// </summary>
+        private void DrawFields()
+        {
+            serializedObject.Update();
+
+            SerializedProperty property = serializedObject.GetIterator();
+            bool enter = true;
+
+            while (property.NextVisible(enter))
+            {
+                enter = false;
+
+                if (property.propertyPath == "m_Script")
+                {
+                    using (new EditorGUI.DisabledScope(true)) EditorGUILayout.PropertyField(property);
+                    continue;
+                }
+
+                if (property.propertyPath == "Shared")
+                {
+                    SharedLabel.tooltip = property.tooltip;
+                    EditorGUILayout.PropertyField(property, SharedLabel);
+                    continue;
+                }
+
+                EditorGUILayout.PropertyField(property, true);
+
+                if (property.propertyPath == "Animations" && targets.Length == 1)
+                {
+                    UIAnimationSharedSection.Draw((UIAnimationPlayer)target, serializedObject);
+                }
+            }
+
+            serializedObject.ApplyModifiedProperties();
         }
 
         /// <summary>

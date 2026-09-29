@@ -111,8 +111,26 @@ namespace rmf_claude.DOTweenUI
 
         [Tooltip("Fires when the animation finishes naturally. Does NOT fire if it is interrupted, " +
                  "stopped, or killed because the GameObject was disabled - unless the animation interrupting " +
-                 "it reads COMPLETE and REPORT beside Interrupt Others, which finishes it.")]
+                 "it reads COMPLETE and REPORT beside Interrupt Others, which finishes it.\n\n" +
+                 "In a shared animation set this can only reach other assets. Each player using the set " +
+                 "can add its own, under Shared Animations in its Inspector.")]
         public UnityEvent OnComplete;
+
+        /// <summary>
+        /// Who this animation is inside a shared animation set, whatever it is called. A player's own On
+        /// Complete for a set's animation (UIAnimationPlayer's SharedOnComplete) finds it by this rather
+        /// than by name, so renaming the animation in the set keeps every player's events on it. Empty
+        /// until a player first needs it, and unused on a player's own animations. A copy of an
+        /// animation must not keep it - see UIAnimationAsset.OnValidate.
+        /// </summary>
+        [HideInInspector]
+        public string Id;
+
+        /// <summary>
+        /// The playing player's own On Complete for a shared animation, run after the set's own. Only
+        /// ever set on the per-player clone of a set's animation; null everywhere else.
+        /// </summary>
+        [NonSerialized] public UnityEvent PlayerOnComplete;
 
         /// <summary>Effective loop count. Guards the meaningless 0 that a zero-initialised list element produces.</summary>
         public int EffectiveLoops

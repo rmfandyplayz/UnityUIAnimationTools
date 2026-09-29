@@ -130,7 +130,7 @@ namespace rmf_claude.DOTweenUI
             if (previewPlayer.EditorShared != asset)
             {
                 EditorGUILayout.HelpBox(
-                    "'" + previewPlayer.name + "' does not use this asset - its Shared slot is " +
+                    "'" + previewPlayer.name + "' does not use this asset - its Shared Anim. Asset is " +
                     (previewPlayer.EditorShared == null ? "empty" : "'" + previewPlayer.EditorShared.name + "'") +
                     ". Assign this asset to it, or pick a player that already uses it.",
                     MessageType.Warning);

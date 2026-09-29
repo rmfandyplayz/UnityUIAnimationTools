@@ -26,13 +26,17 @@ namespace rmf_claude.DOTweenUI
     internal static class UIAnimationTargets
     {
         /// <summary>
-        /// The player a serialized object's steps run on: the player itself, or the Preview On player
-        /// a shared asset's inspector has - the only scene an asset's steps can be resolved against.
-        /// Null when editing several objects at once, or an asset with no preview player.
+        /// The player a serialized object's steps run on: the player itself, the player whose Shared
+        /// Animations a set is being drawn in, or the Preview On player a shared asset's inspector has -
+        /// the only scene an asset's steps can be resolved against. Null when editing several objects at
+        /// once, or an asset with no preview player.
         /// </summary>
         public static UIAnimationPlayer OwnerOf(SerializedObject serialized)
         {
             if (serialized == null || serialized.isEditingMultipleObjects) return null;
+
+            UIAnimationPlayer viewer = UIAnimationSharedSection.PlayerOf(serialized);
+            if (viewer != null) return viewer;
 
             var player = serialized.targetObject as UIAnimationPlayer;
             if (player != null) return player;

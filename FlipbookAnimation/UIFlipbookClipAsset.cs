@@ -40,8 +40,9 @@ namespace rmf_claude.FlipbookAnimation
             // point of authoring, rather than defending against it on every frame of playback.
             if (Clip.Shared != null)
             {
-                Debug.LogWarning("[UIFlipbookClipAsset] " + name + ": a clip asset cannot point at " +
-                                 "another clip asset. The Shared slot has been cleared.", this);
+                // Consequence first, in bold, then the details - how every warning in this folder reads.
+                Debug.LogWarning("<b>[UIFlipbookClipAsset] " + name + ": THE SHARED SLOT WAS CLEARED.</b> " +
+                                 "A clip asset cannot point at another clip asset.", this);
 
                 Clip.Shared = null;
             }
