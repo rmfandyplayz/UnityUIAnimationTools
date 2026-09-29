@@ -26,27 +26,27 @@ Nothing in the folder is left in the global namespace, so it cannot collide with
 
 What's where:
 
-| Folder | Holds |
-|---|---|
-| *(top level)* | `UIAnimationPlayer` and `UIMaterialInstance` — the two components you add |
-| `Data/` | What you author: an animation, a step, and the shared Animation Set asset |
-| `Helpers/` | Sound, Custom Property lookup, stepped easing, warnings |
-| `Attributes/` | The attributes behind the Inspector's one-row controls |
-| `Editor/` | Editor only — `Inspectors/`, `Drawers/`, `SceneView/` (gizmos and the path editor) and `Menus/` (right-click commands) |
+| Folder        | Holds                                                                                                                  |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| *(top level)* | `UIAnimationPlayer` and `UIMaterialInstance` — the two components you add                                              |
+| `Data/`       | What you author: an animation, a step, and the shared Animation Set asset                                              |
+| `Helpers/`    | Sound, Custom Property lookup, stepped easing, warnings                                                                |
+| `Attributes/` | The attributes behind the Inspector's one-row controls                                                                 |
+| `Editor/`     | Editor only — `Inspectors/`, `Drawers/`, `SceneView/` (gizmos and the path editor) and `Menus/` (right-click commands) |
 
 ---
 
 ## Components
 
-| Component | Add it to | Why |
-|---|---|---|
-| **UI Animation Player** | any UI GameObject | Holds the named animations. This is the one you need. |
+| Component                | Add it to                      | Why                                                                                                                                  |
+| ------------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **UI Animation Player**  | any UI GameObject              | Holds the named animations. This is the one you need.                                                                                |
 | **UI Material Instance** | an Image / RawImage / TMP text | Only needed for shader property animation. Gives the element its own material so tweens can never write to the shared project asset. |
 
 And one asset, which is entirely optional:
 
-| Asset | Create with | Why |
-|---|---|---|
+| Asset                | Create with                             | Why                                                                                                                        |
+| -------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | **UI Animation Set** | `Create → UI Animation → Animation Set` | One authored library of animations that many players share. See [Sharing animations](#sharing-animations-between-objects). |
 
 ---
@@ -54,8 +54,8 @@ And one asset, which is entirely optional:
 ## Creating an animation
 
 1. **Add Component → UI Animation Player**.
-2. `+` on **Animations**, set **Name** to `Show`.
-3. `+` on that animation's **Steps**, pick a **Type**. The inspector collapses to only the fields that type uses.
+2. `+` on **Animations**, set **Name** to whatever you'd like.
+3. `+` on that animation's **Steps**, pick a **Type**. The inspector will then show only the fields supported by that type.
 
 The **Type** dropdown is split into sections — Transform, Punch & Shake, Color & Fade, Material, Other — each alphabetical, so a new type always lands in a sensible place. Every other step in a list is shaded, like spreadsheet rows, so you can see where one expanded step ends and the next begins.
 
@@ -63,13 +63,13 @@ Each step's collapsed header reads like a timeline line: `AFTER   Logo (Scale)  
 
 ### Step types
 
-| Section | Types |
-|---|---|
-| Transform | `AnchoredPosition` · `LocalPosition` · `OffsetMax` · `OffsetMin` · `Rotation` · `Scale` · `SizeDelta` |
+| Section       | Types                                                                                                               |
+| ------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Transform     | `AnchoredPosition` · `LocalPosition` · `OffsetMax` · `OffsetMin` · `Rotation` · `Scale` · `SizeDelta`               |
 | Punch & Shake | `PunchAnchoredPosition` · `PunchRotation` · `PunchScale` · `ShakeAnchoredPosition` · `ShakeRotation` · `ShakeScale` |
-| Color & Fade | `CanvasGroupAlpha` · `GraphicAlpha` · `GraphicColor` |
-| Material | `MaterialColor` · `MaterialFloat` |
-| Other | `CustomProperty` · `PlaySound` · `SetActive` |
+| Color & Fade  | `CanvasGroupAlpha` · `GraphicAlpha` · `GraphicColor`                                                                |
+| Material      | `MaterialColor` · `MaterialFloat`                                                                                   |
+| Other         | `CustomProperty` · `PlaySound` · `SetActive`                                                                        |
 
 `SetActive` and `PlaySound` are **instant** — they happen at a point in the timeline rather than over one, so they show a `Delay` but no `Duration` and no easing.
 
@@ -81,11 +81,11 @@ The position and size steps can also follow a curved or zig-zag route to `To` in
 
 These jolt a property and let it settle back to where it started, so they have no FROM/TO and no Ease — DOTween drives the oscillation itself. They show:
 
-| Field | Punch | Shake |
-|---|---|---|
-| `Punch` / `Strength` | How far it jolts, per axis | How far it shakes — one number for `ShakeAnchoredPosition`, per axis for `ShakeRotation` / `ShakeScale` |
-| `Vibrato` | How many times it oscillates over its Duration | same |
-| `Elasticity` / `Randomness` | How far it may overshoot past its start (0–1) | How random the direction is, in degrees |
+| Field                       | Punch                                          | Shake                                                                                                   |
+| --------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `Punch` / `Strength`        | How far it jolts, per axis                     | How far it shakes — one number for `ShakeAnchoredPosition`, per axis for `ShakeRotation` / `ShakeScale` |
+| `Vibrato`                   | How many times it oscillates over its Duration | same                                                                                                    |
+| `Elasticity` / `Randomness` | How far it may overshoot past its start (0–1)  | How random the direction is, in degrees                                                                 |
 
 **On UI, rotate around Z only.** `PunchRotation` and `ShakeRotation` take a strength per axis so you can leave X and Y at `0` — turning around those tips a flat element over in 3D. `(0, 0, 15)` is a firm shake. `ShakeScale` takes one per axis for the same reason: `(0.25, 0.25, 0)` wobbles without distorting.
 
@@ -95,12 +95,12 @@ These jolt a property and let it settle back to where it started, so they have n
 
 Four step types write the same two rect corners from different directions. That's what makes them useful, and also what makes them fight:
 
-| Type | Drives | Reach for it when |
-|---|---|---|
-| `AnchoredPosition` | Position; size untouched | Moving something |
-| `SizeDelta` | Size, around the pivot | A panel that expands, a bar that grows |
-| `OffsetMin` | The **left and bottom** edges | Driving one pair of edges |
-| `OffsetMax` | The **right and top** edges | Driving one pair of edges |
+| Type               | Drives                        | Reach for it when                      |
+| ------------------ | ----------------------------- | -------------------------------------- |
+| `AnchoredPosition` | Position; size untouched      | Moving something                       |
+| `SizeDelta`        | Size, around the pivot        | A panel that expands, a bar that grows |
+| `OffsetMin`        | The **left and bottom** edges | Driving one pair of edges              |
+| `OffsetMax`        | The **right and top** edges   | Driving one pair of edges              |
 
 `OffsetMax` is measured **inward-negative** — the Inspector's Right and Top fields are `-offsetMax.x` and `-offsetMax.y`. So a stretched rect inset 12px on all sides is `Offset Min (12, 12)` with `Offset Max (-12, -12)`.
 
@@ -120,22 +120,22 @@ Each step shows exactly one target slot, chosen by its type.
 
 Below the slot is an optional **Target Path**, and between them that's the whole system:
 
-| Filled in | What the step drives |
-|---|---|
-| The target slot | Exactly that object. Wins over everything below — the path isn't even looked up, and it's greyed out in the Inspector while the slot is filled. |
-| **Target Path** only | The object at that path relative to the player, e.g. `Panel/Icon`. |
-| Neither | The GameObject the player is on. This is the ordinary case. |
+| Filled in            | What the step drives                                                                                                                            |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| The target slot      | Exactly that object. Wins over everything below — the path isn't even looked up, and it's greyed out in the Inspector while the slot is filled. |
+| **Target Path** only | The object at that path relative to the player, e.g. `Panel/Icon`.                                                                              |
+| Neither              | The GameObject the player is on. This is the ordinary case.                                                                                     |
 
 Target Path uses `transform.Find`, so names must match exactly, and — usefully — **inactive objects are found**, which is what lets a `SetActive` step switch a hidden child back on.
 
 **`..` works, and it is what makes the common layout portable.** A very ordinary way to author this is to put the player on a child object called something like `Animations` and point its steps at the *button above it*. That target is not a descendant, so it looks unshareable — but `..` is the player's parent and `../../Sibling` is a sibling of it, chained as deep as you like:
 
-| Target Path | Resolves to |
-|---|---|
-| *(empty)* | the player's own GameObject |
-| `Panel/Icon` | a descendant |
-| `..` | the player's parent — the `Animations`-child layout |
-| `../../Other` | a sibling of the parent |
+| Target Path   | Resolves to                                         |
+| ------------- | --------------------------------------------------- |
+| *(empty)*     | the player's own GameObject                         |
+| `Panel/Icon`  | a descendant                                        |
+| `..`          | the player's parent — the `Animations`-child layout |
+| `../../Other` | a sibling of the parent                             |
 
 Verified against Unity 6000.3: `Find("..")` returns the parent and `Find("../../Name")` walks up twice and back down. Note that `..` is resolved one segment at a time like any other, so `../Self` means "a child of my parent named `Self`", not "me".
 
@@ -152,15 +152,15 @@ An animation whose steps use only empty slots and paths is **portable**: it work
 
 The Inspector checks every step against what it will actually drive, so a broken step shows up while you author it instead of as a Console warning after `Play`. A step that will do nothing gets a ⚠ at the end of its header, its header text fades, and a warning row appears under its target:
 
-| Warning | Meaning |
-|---|---|
-| `'Box' has no Canvas Group` (or Graphic, RectTransform, UI Material Instance) | The Type needs a component the target doesn't have |
-| `Target Path "Iconn" matches nothing` | A typo, or the object was renamed or moved |
-| `Shader 'UI/Default' has no property '_Nope'` | A material step's Shader Property isn't on that material |
-| `No Clip` | A Play Sound step with nothing to play |
-| `No Property picked` | A Custom Property step whose Property dropdown is still on None |
-| `'Score' has no TextMeshProUGUI` | A Custom Property step's component isn't on the object it points at |
-| `TextMeshProUGUI.text is a string, but this step was set up for a float` | The member changed type since it was picked — pick it again |
+| Warning                                                                       | Meaning                                                             |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `'Box' has no Canvas Group` (or Graphic, RectTransform, UI Material Instance) | The Type needs a component the target doesn't have                  |
+| `Target Path "Iconn" matches nothing`                                         | A typo, or the object was renamed or moved                          |
+| `Shader 'UI/Default' has no property '_Nope'`                                 | A material step's Shader Property isn't on that material            |
+| `No Clip`                                                                     | A Play Sound step with nothing to play                              |
+| `No Property picked`                                                          | A Custom Property step whose Property dropdown is still on None     |
+| `'Score' has no TextMeshProUGUI`                                              | A Custom Property step's component isn't on the object it points at |
+| `TextMeshProUGUI.text is a string, but this step was set up for a float`      | The member changed type since it was picked — pick it again         |
 
 Everything under the warning is **greyed out** until the step is fixed — Duration, Ease, From / To and the rest only matter once the step can reach what it drives. What fixes it stays editable: Start, Type, the target slot and Target Path above the warning, and a sound step's Clip, a material step's Shader Property or a Custom Property step's Property below it. The one warning that greys nothing is a sound whose Target Path misses, because that still plays, on the shared audio source.
 
@@ -250,11 +250,11 @@ A step whose own box is ticked **always** snaps, and its box stays visible whate
 
 Each endpoint has a **mode**:
 
-| Mode | Meaning |
-|---|---|
-| `Absolute` | Use the value exactly as typed. |
-| `Baseline` | The element's resting value, captured at `Awake`, **plus** the typed value as an offset. |
-| `Current` | Whatever the value is when the tween starts, plus the typed value (DOTween relative). Only available on **To**, and only when there is no From. |
+| Mode       | Meaning                                                                                                                                         |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Absolute` | Use the value exactly as typed.                                                                                                                 |
+| `Baseline` | The element's resting value, captured at `Awake`, **plus** the typed value as an offset.                                                        |
+| `Current`  | Whatever the value is when the tween starts, plus the typed value (DOTween relative). Only available on **To**, and only when there is no From. |
 
 Hover a mode dropdown for what its options mean — each one describes only the options it offers. Hover the `To` label for what the row is.
 
@@ -272,11 +272,11 @@ The **record** button at the end of every From and To row copies what the step's
 
 What it stores depends on the row's mode, so the step always ends up exactly where the object was:
 
-| Mode | Stored |
-|---|---|
-| `Absolute` | The value as it is |
-| `Baseline` | The difference from the resting value |
-| `Current` | The difference from where the step starts |
+| Mode       | Stored                                    |
+| ---------- | ----------------------------------------- |
+| `Absolute` | The value as it is                        |
+| `Baseline` | The difference from the resting value     |
+| `Current`  | The difference from where the step starts |
 
 **Pose inside a preview.** Out of a preview, wherever the object sits *is* its resting value — so `Baseline` and `Current` would always store 0, and those buttons are greyed out until a preview is running. The workflow is the one Unity's Animation window uses for keys:
 
@@ -305,11 +305,11 @@ Point 2               Absolute   X 150    Y -100   [-]
 
 This is **not** the ease. The path is *where* the object goes; the ease is still *how fast* it gets there — it controls how far along the path the step is, so `Out Quad` still decelerates into `To`, just along the curve. Speed along the path is constant apart from the ease, so a long segment and a short one are covered at the same rate.
 
-| Custom Path | Meaning |
-|---|---|
-| `Disabled` | A straight line, as without a path. The default. |
-| `Curved` | A smooth curve through every point (DOTween's Catmull-Rom path). |
-| `Linear` | Straight lines between the points, with a sharp corner at each. |
+| Custom Path | Meaning                                                          |
+| ----------- | ---------------------------------------------------------------- |
+| `Disabled`  | A straight line, as without a path. The default.                 |
+| `Curved`    | A smooth curve through every point (DOTween's Catmull-Rom path). |
+| `Linear`    | Straight lines between the points, with a sharp corner at each.  |
 
 **Points follow `To`'s mode**, and the mode column beside each point shows which one that is. `Absolute` = as typed, `Baseline` = an offset from the resting value, `Current` = an offset from wherever the step starts. That's what makes a `To: Current` path portable — the same swoop works from wherever the object happens to be. The start of the path is the `From` value when the step has one, and otherwise wherever the object is when the step begins, exactly as without a path.
 
@@ -321,13 +321,13 @@ With a shape chosen but no points, the step still moves in a straight line. Sett
 
 On a position step, **Edit Path in Scene** draws the path where the object will actually travel, with handles:
 
-| Do | Get |
-|---|---|
-| Drag a numbered point | Moves it |
-| Drag `To` (green ring) or `From` (grey ring, when the step has a From) | Moves that endpoint |
-| Click a small **+** on a segment | Adds a point there |
-| Ctrl+click (Cmd on Mac) a numbered point | Removes it — it turns red while Ctrl is held over it |
-| `Esc`, **Done**, or the button again | Stops editing |
+| Do                                                                     | Get                                                  |
+| ---------------------------------------------------------------------- | ---------------------------------------------------- |
+| Drag a numbered point                                                  | Moves it                                             |
+| Drag `To` (green ring) or `From` (grey ring, when the step has a From) | Moves that endpoint                                  |
+| Click a small **+** on a segment                                       | Adds a point there                                   |
+| Ctrl+click (Cmd on Mac) a numbered point                               | Removes it — it turns red while Ctrl is held over it |
+| `Esc`, **Done**, or the button again                                   | Stops editing                                        |
 
 Points move in the canvas plane, so a drag can't push one off the canvas in depth even in a perspective Scene view. Every drag is an ordinary Undo step, and it marks prefab overrides exactly as typing into the Inspector would. While editing, the move tool is hidden and clicks on empty space are ignored — the same way Unity's own *Edit Collider* works — so a missed handle can't move the object or select something else.
 
@@ -411,10 +411,10 @@ For anything the other step types don't cover: a score counting up, dialogue typ
 
 A `string` member is listed twice, once for each way it can move:
 
-| Entry | Does |
-|---|---|
+| Entry                      | Does                                                                                                                                                 |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `string text (typewriter)` | DOTween's own text tween — what `DOText` does. The characters of To replace those of From one at a time. Rich-text tags are never shown half-written |
-| `string text (as number)` | Counts a number from From to To and writes it into the text with **Format** — a score counter |
+| `string text (as number)`  | Counts a number from From to To and writes it into the text with **Format** — a score counter                                                        |
 
 **Format** is a .NET format string: `0` for whole numbers, `0.0` for one decimal place, `N0` for thousands separators (`1,500`), `00` for at least two digits. A step without a From (or with `To: Current`) counts on from the number the text already shows — as long as the text is *just* a number; `Score: 120` reads as 0. Put the label in a separate text object.
 
@@ -427,15 +427,15 @@ A `string` member is listed twice, once for each way it can move:
 
 ### Values and modes
 
-| Member type | From / To | Notes |
-|---|---|---|
-| `float` | a number | |
-| `int` | a whole number | Rounded every frame, so a counter on an `int` ticks cleanly |
-| `Vector2` | X / Y | |
-| `Vector3` | X / Y / Z | |
-| `Color` | a colour | |
-| `string` (typewriter) | text | `Absolute` and `Baseline` only |
-| `string` (as number) | a number | Plus **Format** |
+| Member type           | From / To      | Notes                                                       |
+| --------------------- | -------------- | ----------------------------------------------------------- |
+| `float`               | a number       |                                                             |
+| `int`                 | a whole number | Rounded every frame, so a counter on an `int` ticks cleanly |
+| `Vector2`             | X / Y          |                                                             |
+| `Vector3`             | X / Y / Z      |                                                             |
+| `Color`               | a colour       |                                                             |
+| `string` (typewriter) | text           | `Absolute` and `Baseline` only                              |
+| `string` (as number)  | a number       | Plus **Format**                                             |
 
 `Absolute`, `Baseline` and `Current` mean what they mean everywhere else. `Baseline` is the member's value at `Awake`, and the preview restores every Custom Property to exactly what it held — a counted-number text goes back to its original text, not to the number re-formatted.
 
@@ -455,12 +455,12 @@ A `string` member is listed twice, once for each way it can move:
 
 Right-click a header in the Inspector:
 
-| Right-click on | You get |
-|---|---|
-| An **animation** header | `Copy Animation` · `Paste Animation (overwrite)` · `Paste Animation Above` · `Paste Animation Below` · `Mirror Animation` · `Duplicate as Mirrored` |
-| A **step** header | `Copy Step` · `Paste Step (overwrite)` · `Paste Step Above` · `Paste Step Below` · `Mirror Step` |
-| The **Animations** list | `Paste Animation (add to end)` · `Paste Animation Mirrored (add to end)` · on a player, `Save as Animation Set...` (see [Turning a player's animations into a set](#turning-a-players-animations-into-a-set)) |
-| The **Steps** list | `Paste Step (add to end)` · `Paste Step Mirrored (add to end)` |
+| Right-click on                                   | You get                                                                                                                                                                                                        |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An **animation** header                          | `Copy Animation` · `Paste Animation (overwrite)` · `Paste Animation Above` · `Paste Animation Below` · `Mirror Animation` · `Duplicate as Mirrored`                                                            |
+| A **step** header                                | `Copy Step` · `Paste Step (overwrite)` · `Paste Step Above` · `Paste Step Below` · `Mirror Step`                                                                                                               |
+| The **Animations** list                          | `Paste Animation (add to end)` · `Paste Animation Mirrored (add to end)` · on a player, `Save as Animation Set...` (see [Turning a player's animations into a set](#turning-a-players-animations-into-a-set))  |
+| The **Steps** list                               | `Paste Step (add to end)` · `Paste Step Mirrored (add to end)`                                                                                                                                                 |
 | An animation or step under **Shared Animations** | `Copy Animation` · `Override Animation` / `Copy Step` — read-only there, so nothing that would change the set (see [Shared Animations in the player's Inspector](#shared-animations-in-the-players-inspector)) |
 
 **Above / Below insert a new element** and shuffle the rest down, rather than overwriting the one you right-clicked — that's how you land a step in the middle of a list without adding a blank one at the end and dragging it up. The pasted `Start` mode comes across as copied, so pasting a `With Previous` step into a group is how you widen it.
@@ -483,28 +483,28 @@ For bulk reuse, **Copy Component / Paste Component Values** on the whole player 
 
 This rewrites the steps once, at author time — there is no runtime reverse mode, and nothing about playback changes. What you get is a second animation, and it is yours to diverge from as soon as it exists.
 
-| Command | Does |
-|---|---|
-| `Mirror Animation` | Mirrors that animation in place |
-| `Duplicate as Mirrored` | Appends a mirrored copy named `<name> Mirrored` |
+| Command                                 | Does                                                                                            |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `Mirror Animation`                      | Mirrors that animation in place                                                                 |
+| `Duplicate as Mirrored`                 | Appends a mirrored copy named `<name> Mirrored`                                                 |
 | `Paste Animation Mirrored (add to end)` | Mirrors the clipboard on the way in — copy a `Show` off one object, paste a `Hide` onto another |
-| `Mirror Step` | Flips one step, for fixing a single wrong direction |
+| `Mirror Step`                           | Flips one step, for fixing a single wrong direction                                             |
 
 ### What it changes
 
-| Forwards | Mirrored |
-|---|---|
-| Step order | Fully reversed — the last step becomes the first. Joined groups stay joined and stay whole, and their members reverse too. Reversing inside a group only changes how the list reads: joined steps all start from the same point, so their order in the list never affected timing |
-| Staggered delays inside a joined group | Flipped, so the item that arrived last is the first to leave |
-| `From` / `To` | Swapped, values and modes both |
-| Ease preset | **Unchanged.** A mirrored `Hide` keeps the `Out Quart` its `Show` was authored with |
-| Custom curve | **Unchanged** |
-| `To: Current` relative offset | The same offset negated |
-| Movement path points | Reversed, so the mirror walks the same path backwards. On a `To: Current` step they're also re-based onto the new start. A `Linear` path retraces exactly; a `Curved` one lands within a pixel or two, because DOTween shapes the two ends of a curve slightly differently |
-| `SetActive` on | `SetActive` off |
-| Punch / shake | Unchanged — they already return to where they started |
-| `PlaySound` | Keeps its clip. If a hide needs a different sound, swap it afterwards |
-| `CustomProperty` text | Swapped like any other value. With no From, the mirror types from the forward `To` back to `Baseline` — the resting text |
+| Forwards                               | Mirrored                                                                                                                                                                                                                                                                          |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Step order                             | Fully reversed — the last step becomes the first. Joined groups stay joined and stay whole, and their members reverse too. Reversing inside a group only changes how the list reads: joined steps all start from the same point, so their order in the list never affected timing |
+| Staggered delays inside a joined group | Flipped, so the item that arrived last is the first to leave                                                                                                                                                                                                                      |
+| `From` / `To`                          | Swapped, values and modes both                                                                                                                                                                                                                                                    |
+| Ease preset                            | **Unchanged.** A mirrored `Hide` keeps the `Out Quart` its `Show` was authored with                                                                                                                                                                                               |
+| Custom curve                           | **Unchanged**                                                                                                                                                                                                                                                                     |
+| `To: Current` relative offset          | The same offset negated                                                                                                                                                                                                                                                           |
+| Movement path points                   | Reversed, so the mirror walks the same path backwards. On a `To: Current` step they're also re-based onto the new start. A `Linear` path retraces exactly; a `Curved` one lands within a pixel or two, because DOTween shapes the two ends of a curve slightly differently        |
+| `SetActive` on                         | `SetActive` off                                                                                                                                                                                                                                                                   |
+| Punch / shake                          | Unchanged — they already return to where they started                                                                                                                                                                                                                             |
+| `PlaySound`                            | Keeps its clip. If a hide needs a different sound, swap it afterwards                                                                                                                                                                                                             |
+| `CustomProperty` text                  | Swapped like any other value. With no From, the mirror types from the forward `To` back to `Baseline` — the resting text                                                                                                                                                          |
 
 Everything outside the steps — `Loops`, `Loop Type`, `Play At Custom FPS`, `Interrupt Others`, `Notes`, `On Complete` — is carried across untouched.
 
@@ -588,11 +588,11 @@ The Preview On slot is not saved into the asset. It couldn't be: a scene referen
 
 The Inspector has **Play / Reset** buttons per animation, and they work **without entering play mode**. The list includes animations from the Shared set as well as local ones. Every button has a tooltip.
 
-| Button | Does |
-|---|---|
-| `Play` | Runs the animation on the real scene objects from its first frame — what `Reset` shows — carrying on from where the last animation ends |
-| `Reset` | Jumps to the animation's first frame without playing it: steps with a From snap to it, the rest stay put. `Play` straight after runs from that frame |
-| `Stop and Restore` | Ends the preview and puts every value back as it was before the first `Play` |
+| Button             | Does                                                                                                                                                 |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Play`             | Runs the animation on the real scene objects from its first frame — what `Reset` shows — carrying on from where the last animation ends              |
+| `Reset`            | Jumps to the animation's first frame without playing it: steps with a From snap to it, the rest stay put. `Play` straight after runs from that frame |
+| `Stop and Restore` | Ends the preview and puts every value back as it was before the first `Play`                                                                         |
 
 **A preview chains.** Play `OpenCredits`, then `CloseCredits`, and the close starts from where the open ends — which is the only way to judge a close animation, since its whole job is to start from the open state. If the open is **still playing** when you press the close, it's finished first, so where the close starts never depends on when you clicked. Pressing `Play` on the **same** animation again starts it over from where it started last time, so iterating on one animation still replays it from the top — and after `Reset`, "where it started" is the frame `Reset` showed. `Stop and Restore` goes all the way back to rest.
 
@@ -628,11 +628,11 @@ Rotation, colour, fades, material values, punch/shake, SetActive, sound and Cust
 
 The **Scene Gizmos** button under the preview opens the settings:
 
-| Setting | Options |
-|---|---|
-| Show | `Disabled` · `All Animations` · `Expanded Animations` (the default) · `Expanded Steps` — "expanded" means open in the Inspector, so what you're editing is what you see |
-| Colors | `Distinct` — a different colour per drawing, spread as far apart as possible, with **Shuffle Colors** for a new set · `Rainbow` — red for the first drawing through to purple for the last, in timeline order. Rainbow is for `Expanded Steps` only: in the other modes the row is greyed out and `Distinct` is used, since across whole animations a gradient says nothing a distinct colour doesn't say better. Your choice is kept for when you switch back |
-| Outlines | How many outlines a size step is drawn with, 2 to 12 |
+| Setting  | Options                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Show     | `Disabled` · `All Animations` · `Expanded Animations` (the default) · `Expanded Steps` — "expanded" means open in the Inspector, so what you're editing is what you see                                                                                                                                                                                                                                                                                        |
+| Colors   | `Distinct` — a different colour per drawing, spread as far apart as possible, with **Shuffle Colors** for a new set · `Rainbow` — red for the first drawing through to purple for the last, in timeline order. Rainbow is for `Expanded Steps` only: in the other modes the row is greyed out and `Distinct` is used, since across whole animations a gradient says nothing a distinct colour doesn't say better. Your choice is kept for when you switch back |
+| Outlines | How many outlines a size step is drawn with, 2 to 12                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 The settings are your own editor preferences — they're never saved into a scene, prefab or asset. A shared set draws on its **Preview On** player. Gizmos are edit-mode only.
 
