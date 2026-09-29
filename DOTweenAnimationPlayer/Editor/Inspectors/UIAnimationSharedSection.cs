@@ -45,6 +45,7 @@ namespace rmf_claude.DOTweenUI
             public UIAnimationAsset Asset;
             public UIAnimationAsset Copy;
             public int CopiedAt;
+            public int CopiedGeneration;
             public SerializedObject Set;
             public SerializedObject PlayerSerialized;
             public ReorderableList List;
@@ -54,6 +55,20 @@ namespace rmf_claude.DOTweenUI
         // looked up by the SerializedObject the drawers are handed.
         private static readonly Dictionary<UIAnimationPlayer, View> views = new Dictionary<UIAnimationPlayer, View>();
         private static readonly Dictionary<SerializedObject, View> byObject = new Dictionary<SerializedObject, View>();
+
+        // Every view recopies its set when this moves. The dirty count alone misses two things: saving
+        // resets it to zero (measured, 6000.3), so an edit and a save between two repaints - which is
+        // what AddOnComplete does - leave it just where the view last saw it; and a set changed on disk
+        // (git, another program) is reloaded without it moving at all.
+        private static int generation;
+
+        private sealed class Reimports : AssetPostprocessor
+        {
+            private static void OnPostprocessAllAssets(string[] imported, string[] deleted, string[] moved, string[] movedFrom)
+            {
+                if (imported.Length > 0) generation++;
+            }
+        }
 
         /// <summary>
         /// The player whose Shared Animations a serialized object is being drawn in, or null when it is
@@ -96,12 +111,14 @@ namespace rmf_claude.DOTweenUI
                 View view = ViewFor(player, asset);
                 view.PlayerSerialized = serialized;
 
-                // Every edit to the set dirties it, Undo included, so this is how the copy stays current.
+                // Every edit to the set dirties it, Undo included, so this is how the copy stays current,
+                // with generation for what the dirty count misses.
                 int changes = EditorUtility.GetDirtyCount(asset);
-                if (changes != view.CopiedAt)
+                if (changes != view.CopiedAt || generation != view.CopiedGeneration)
                 {
                     EditorUtility.CopySerialized(asset, view.Copy);
                     view.CopiedAt = changes;
+                    view.CopiedGeneration = generation;
                 }
 
                 view.Set.Update();
@@ -133,6 +150,7 @@ namespace rmf_claude.DOTweenUI
                 Asset = asset,
                 Copy = copy,
                 CopiedAt = EditorUtility.GetDirtyCount(asset),
+                CopiedGeneration = generation,
                 Set = new SerializedObject(copy),
             };
 
@@ -314,12 +332,17 @@ namespace rmf_claude.DOTweenUI
         /// Gives this player an On Complete for the set's animation at index, with one empty listener
         /// ready to fill in. The animation gets its Id first if it has none yet, and the set is saved
         /// straight away: a scene saved with an entry pointing at an Id the set never saved would lose it.
-        /// One Undo step for both.
+        /// One Undo step for both. Does nothing if the player already has one: the button is only drawn
+        /// when it hasn't, but a view that has not caught up with the set yet would otherwise add another
+        /// on every click, each hidden behind the first.
         /// </summary>
         public static void AddOnComplete(UIAnimationPlayer player, SerializedObject serialized, int index)
         {
             UIAnimationAsset asset = player.EditorShared;
             if (asset == null || index < 0 || index >= asset.Animations.Count || asset.Animations[index] == null) return;
+
+            serialized.Update();
+            if (EntryIndex(serialized, asset.Animations[index].Id) >= 0) return;
 
             Undo.IncrementCurrentGroup();
             int group = Undo.GetCurrentGroup();
@@ -335,9 +358,8 @@ namespace rmf_claude.DOTweenUI
                 set.Dispose();
 
                 AssetDatabase.SaveAssetIfDirty(asset);
+                generation++;
             }
-
-            serialized.Update();
 
             SerializedProperty entries = serialized.FindProperty("SharedOnComplete");
             int at = entries.arraySize;
