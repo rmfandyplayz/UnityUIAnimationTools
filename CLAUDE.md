@@ -6,7 +6,9 @@
 
 ## The UI tools in this project
 
-Three reusable UGUI tools, each a self-contained folder with its own `README.md`. **Read the relevant README before changing a tool.** They are independent — no tool references another.
+Three reusable UGUI tools, each a self-contained folder with its own `README.md`. **Read the relevant README before changing a tool** — for `DOTweenAnimationPlayer`, read the wiki instead (below). They are independent — no tool references another.
+
+**`DOTweenAnimationPlayer`'s user docs live in the GitHub wiki** (September 2026, on request; the README had grown to 940 lines): `https://github.com/rmfandyplayz/UnityUIAnimationTools.wiki.git`, pushable with the author's normal git login. Its README now holds only a short install note, the Code API signature block and a link. **A change to the public API must update both the README's block and the wiki's `Code-API.md`.** Any user-visible behaviour change goes into the relevant wiki page. Wiki conventions: plain language written for non-programmers first; technical detail in a collapsed `<details><summary><b>Under the hood</b></summary>` block (blank line after `</summary>`, or its markdown doesn't render); GitHub alerts (`> [!TIP]`, `> [!WARNING]`, `> [!NOTE]`) for tips and traps, which the wiki does render; no `# Title` line, since the wiki already shows the page name; step types by their Inspector names (`Anchored Position`, not `AnchoredPosition`); links as `[text](Page-Name#heading-slug)`. Navigation is `_Sidebar.md`, in six sections (Installation, Code API, Basic usage, Advanced usage, Nitty-gritties, Warnings and Gotchas) under a "UI Animation Player" heading, leaving room for the other tools later. Check links resolve before pushing: every `(Page#anchor)` should match a file and a heading slug.
 
 | Folder | What it does | Namespace |
 | --- | --- | --- |
