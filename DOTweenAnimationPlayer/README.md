@@ -19,7 +19,7 @@ Needs **Unity 2022.3+**, **DOTween Pro**, uGUI and TextMeshPro. Installs through
 3. In the same panel, click **Create ASMDEF**.
 4. **`Window → Package Manager → + → Install package from git URL…`** and paste:
    ```
-   https://github.com/rmfandyplayz/UnityUIAnimationTools.git?path=/DOTweenAnimationPlayer#v1.0.0
+   https://github.com/rmfandyplayz/UnityUIAnimationTools.git?path=/DOTweenAnimationPlayer#release
    ```
 5. **Add Component → UI Animation Player** on any UI object.
 
@@ -29,7 +29,9 @@ Needs **Unity 2022.3+**, **DOTween Pro**, uGUI and TextMeshPro. Installs through
 
 ### Updating
 
-In your project's `Packages/manifest.json`, change the version at the end of the line (`#v1.0.0` → the newer one) and switch back to Unity. Or repeat step 4 with the new version in the URL. The versions are listed under the repo's [tags](https://github.com/rmfandyplayz/UnityUIAnimationTools/tags).
+**`Window → Package Manager`**, select **DOTween UI Animation Player** under *In Project*, and click **Update** at the top right. Unity checks GitHub and installs the newest release. Nothing changes until you click it. (The refresh button under the list doesn't check packages installed from GitHub.)
+
+Installed it with `#v1.0.0` at the end of the URL? Change that to `#release` in your project's `Packages/manifest.json` once, and Update works from then on.
 
 More detail: [Installation](https://github.com/rmfandyplayz/UnityUIAnimationTools/wiki/Installation).
 
