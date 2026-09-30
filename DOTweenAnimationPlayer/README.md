@@ -31,8 +31,6 @@ Needs **Unity 2022.3+**, **DOTween Pro**, uGUI and TextMeshPro. Installs through
 
 **`Window → Package Manager`**, select **DOTween UI Animation Player** under *In Project*, and click **Update** at the top right. Unity checks GitHub and installs the newest release. Nothing changes until you click it. (The refresh button under the list doesn't check packages installed from GitHub.)
 
-Installed it with `#v1.0.0` at the end of the URL? Change that to `#release` in your project's `Packages/manifest.json` once, and Update works from then on.
-
 More detail: [Installation](https://github.com/rmfandyplayz/UnityUIAnimationTools/wiki/Installation).
 
 ---

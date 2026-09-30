@@ -34,8 +34,6 @@ In Unity:
 
 The **refresh** button under the package list does *not* check for these updates. It only looks at Unity's own packages. Use **Update**.
 
-**If a project installed it with `#v1.0.0`** at the end of the URL (the first version worked that way): open that project's `Packages/manifest.json`, change `#v1.0.0` to `#release` on the `dotween-ui-animation` line, and save. Update works from then on.
-
 ## The version number
 
 `DOTweenAnimationPlayer/package.json` has a `version` line, and it's the number Package Manager shows. It's how you can tell which release a project has. **Claude bumps it whenever it changes the tool, so you don't need to.**
