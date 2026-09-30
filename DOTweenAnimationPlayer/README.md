@@ -57,8 +57,6 @@ And one asset, which is entirely optional:
 2. `+` on **Animations**, set **Name** to whatever you'd like.
 3. `+` on that animation's **Steps**, pick a **Type**. The inspector will then show only the fields supported by that type.
 
-The **Type** dropdown is split into sections — Transform, Punch & Shake, Color & Fade, Material, Other — each alphabetical, so a new type always lands in a sensible place. Every other step in a list is shaded, like spreadsheet rows, so you can see where one expanded step ends and the next begins.
-
 Each step's collapsed header reads like a timeline line: `AFTER   Logo (Scale)   0.25s   Out Back` — start mode, the object it drives, the property in parentheses, duration, ease. A step that drives the player's own GameObject says `[self]` rather than repeating the name at the top of the Inspector. When it doesn't fit, a Target Path gives way from its front (`…/HoverHighlight`), since the end of a path is what names the object; otherwise the end is cut. Hover a shortened header for the full text. A ⚠ at the end of a header means the step will do nothing as authored — see [Type check](#type-check).
 
 ### Step types
@@ -89,26 +87,154 @@ These jolt a property and let it settle back to where it started, so they have n
 
 **On UI, rotate around Z only.** `PunchRotation` and `ShakeRotation` take a strength per axis so you can leave X and Y at `0` — turning around those tips a flat element over in 3D. `(0, 0, 15)` is a firm shake. `ShakeScale` takes one per axis for the same reason: `(0.25, 0.25, 0)` wobbles without distorting.
 
-**Cut short, a punch or shake goes back to where it started.** A punch wobbles around wherever the object was when it began. Stopped part way — played again, `Stop`, another animation's Interrupt Others at `STOP`, or a disable — it would otherwise stay wherever the wobble had got to, and the next one would wobble around *that*: spamming a button with a scale punch on it left the button at 2.19× after three quick presses. So the player puts it back first. One that hasn't started yet, or has finished, is already where it began.
+**Cut short, a punch or shake goes back to where it started.** (A punch wobbles around wherever the object was when it began.)
+>If the animation was interrupted part way (if it was played again, `Stop` was invoked, another animation specified `Interrupt Others` at `STOP`, or if the GameObject is to be disabled) it would previously stay wherever the wobble had got to, and the next one would wobble around *that*. In other words, spamming a button with a scale punch on it left the button at 2.19× after three quick presses. 
+
+So the player puts it back first. One that hasn't started yet, or has finished, is already where it began.
 
 ### Sizing a RectTransform
 
-Four step types write the same two rect corners from different directions. That's what makes them useful, and also what makes them fight:
+Four step types move or resize a RectTransform. Pick the one that matches how you're thinking about it:
 
-| Type               | Drives                        | Reach for it when                      |
-| ------------------ | ----------------------------- | -------------------------------------- |
-| `AnchoredPosition` | Position; size untouched      | Moving something                       |
-| `SizeDelta`        | Size, around the pivot        | A panel that expands, a bar that grows |
-| `OffsetMin`        | The **left and bottom** edges | Driving one pair of edges              |
-| `OffsetMax`        | The **right and top** edges   | Driving one pair of edges              |
+| Type               | Think of it as                            | Reach for it when                      |
+| ------------------ | ----------------------------------------- | -------------------------------------- |
+| `AnchoredPosition` | Where it sits. Size stays the same.       | Sliding something in or out            |
+| `SizeDelta`        | How big it is, growing out from its pivot | A panel that expands, a bar that grows |
+| `OffsetMin`        | Where its **LEFT and BOTTOM** edges are   | Pulling one side in or out             |
+| `OffsetMax`        | Where its **RIGHT and TOP** edges are     | Pulling one side in or out             |
 
-`OffsetMax` is measured **inward-negative** — the Inspector's Right and Top fields are `-offsetMax.x` and `-offsetMax.y`. So a stretched rect inset 12px on all sides is `Offset Min (12, 12)` with `Offset Max (-12, -12)`.
+**In every one of them, "+" (a positive value) means right or up.** That matches the Inspector's Left and Bottom fields, but *not* Right and Top — Unity shows those two sign-flipped, so that a positive number there always means "inset". So a panel inset 12px on every side reads Left 12 / Bottom 12 / Right 12 / Top 12 in the Inspector, but in a step it's `OffsetMin (12, 12)` and `OffsetMax (-12, -12)`. **Copying a Right or Top value into a step? Flip its sign.**
 
-**Don't animate two of these on the same target at once.** Unity stores one rect and derives all four views from it, so they overwrite each other instead of combining. Measured on a 100×40 rect: setting `offsetMin` from `(-50,-20)` to `(-10,-10)` *also* moved `sizeDelta` to `(60,30)` and `anchoredPosition` to `(20,5)`, with nothing else touched. Pick the one view that says what you mean and drive only that.
+**Don't mix a whole-box step with an edge step on the same target.** `AnchoredPosition` and `SizeDelta` move the whole box; `OffsetMin` and `OffsetMax` move one corner and hold the other still. Run one of each at the same time and they undo each other every frame. For example: slide a panel 100px right with `AnchoredPosition` while an `OffsetMin` step holds its left edge. The slide moves both edges, the `OffsetMin` step drags the left edge back, and the panel ends up *stretching* to the right instead of moving. Two from the same group are fine together: sliding while growing, or moving both corners.
 
-`SizeDelta` is size **relative to the anchors**, so on a stretched rect it behaves as padding rather than as pixels. Un-stretch the anchors first if you want a literal pixel size.
+**On a stretched rect, `SizeDelta` isn't a size in pixels.** It's how much bigger than the anchor area the rect is: `(0, 0)` exactly fills it, and `(-24, -24)` is 12px smaller all round. Un-stretch the anchors first if you want a literal pixel size.
 
-All three new types take X/Y (Z is unused) and support [Snapping](#snapping).
+All four take X and Y (Z is ignored) and support [Snapping](#snapping).
+
+---
+
+## Playing from code
+
+```csharp
+[SerializeField] private UIAnimationPlayer anim;
+
+anim.Play("Show");
+anim.Play("Hide", () => gameObject.SetActive(false));   // fires on a natural finish only
+
+// Play returns the live Sequence, so coroutines work:
+yield return anim.Play("Show").WaitForCompletion();
+```
+
+Full API:
+
+```csharp
+Sequence Play(string name);
+Sequence Play(string name, Action onComplete);
+Sequence Play(string name, Action<UIAnimationEndReason> onEnd);   // always fires, exactly once
+
+void Stop(string name, bool complete = false);   // complete: finish it, as Interrupt Others' COMPLETE REPORT does
+void StopAll(bool complete = false);
+
+void PlayAnimation(string name);    // void wrappers, so UnityEvents can call them
+void StopAnimation(string name);
+
+bool IsPlaying(string name);
+bool IsAnyPlaying { get; }
+bool Has(string name);
+
+void ApplyFromState(string name);   // snap to an animation's FROM values without playing
+void CaptureBaseline();             // re-capture resting values at runtime
+
+bool SetTo(string name, int step, float / Vector3 / Color / string value);    // a step's To, from code
+bool SetFrom(string name, int step, float / Vector3 / Color / string value);  // a step's From, from code
+void ClearOverrides(string name);   // back to the values authored in the Inspector
+```
+
+### Setting From and To from code
+
+Some endpoints are only known at runtime — the score a counter counts up to, the text a label types out, the colour of whichever team won. Author the step as usual, then replace its value from code before playing:
+
+```csharp
+anim.SetTo("CountUp", 0, score);     // step 0 = the top step in the Inspector
+anim.Play("CountUp");
+
+anim.SetFrom("CountUp", 0, oldScore);
+anim.SetTo("CountUp", 0, newScore);
+anim.Play("CountUp");
+```
+
+- **Steps are numbered from 0**, top to bottom, as the Inspector lists them. Reordering the steps changes the numbers, so keep a step you set from code where it is.
+- **The value means what typing it into the step would.** The step's mode still applies: a `Baseline` To lands on the resting value *plus* this, an `Absolute` one on exactly this. For "count to this number" use `Absolute`.
+- **Pass the kind of value the step tweens**: a number for a fade, a material float, an `int` or `float` member or a counted number; a `Vector3` for a move, size, scale or rotation (a `Vector2` converts on its own); a `Color`; a `string` for typed text. Punch and shake take their strength as their To. Anything else — a colour for a move, a value for a `SetActive` or sound step — is ignored with a warning, and the call returns `false`.
+- **`SetFrom` needs the step's From turned on** (the button reads `FROM`). A step without one starts from wherever the value already is and has no From to replace, so that is refused with a warning too. Punch and shake have no From.
+- **It lasts** for every later `Play` of that animation, until `ClearOverrides(name)` puts the Inspector's values back. An animation already running keeps the value it started with; `ApplyFromState` uses a From set from code.
+- **Only this player changes.** Nothing is written into the Inspector data, and an animation from a shared set is this player's own copy, so other players using the same set are unaffected.
+
+### Knowing how an animation ended
+
+`Play(name, Action)` fires **only on a natural finish**. That's the right rule for an authored `On Complete`, and the wrong one for code:
+
+```csharp
+anim.Play("Hide", () => Destroy(gameObject));   // leaks the object if anything interrupts the hide
+```
+
+The third overload closes that. Its callback fires **exactly once, whatever happens** — never zero times, never twice — and says how it ended:
+
+```csharp
+anim.Play("Hide", reason =>
+{
+    if (reason == UIAnimationEndReason.Completed) Destroy(gameObject);
+    else                                          gameObject.SetActive(false);
+});
+```
+
+| `UIAnimationEndReason` | When |
+|---|---|
+| `Completed` | Ran to its natural end — or `Stop(name, complete: true)`, or an animation with nothing to play, or an animation interrupting it with **Interrupt Others** set to `COMPLETE` `REPORT`. The only reason that also fires `On Complete`. |
+| `Interrupted` | Another `Play` cut it short: the same animation restarting, or a different one with **Interrupt Others** — including `COMPLETE` `SILENT`, which leaves it at its end state without counting as a finish. |
+| `Stopped` | `Stop`, `StopAll`, or a kill issued from outside the player such as `DOTween.KillAll`. |
+| `Disabled` | The GameObject or the player component was disabled while it was running. |
+| `Destroyed` | The player was destroyed while an animation was still live. |
+| `NotFound` | No animation of that name exists, so nothing played. A typo is a runtime failure like any other, and a caller waiting on a callback that never comes is what this overload exists to prevent. |
+
+Two things to know about it:
+
+- **Destroying an *enabled* object reports `Disabled`, not `Destroyed`.** Unity runs `OnDisable` before `OnDestroy` and gives no way to know a destroy is coming, so that's reported honestly rather than guessed at. `Destroyed` is what you get when **Kill On Disable** is off, or the object was already inactive. If you only care whether the animation finished, compare against `Completed` and ignore the rest.
+- **A kill from outside the player counts too.** `DOTween.KillAll()` or `DOTween.Clear()` elsewhere in the project resolves every armed callback as `Stopped` rather than leaving callers waiting.
+
+The plain `Action` overload and the authored `On Complete` UnityEvent are **unchanged** by any of this — still a natural finish only, because that's what "finished" means to someone who wired up an event in the Inspector. When both are present, `On Complete` runs first and `onEnd` last, so an authored event still gets to run before a caller's `Destroy`.
+
+One source-level wrinkle: `Play(name, null)` is now ambiguous between two overloads and needs a cast. `Play(name)` is unaffected.
+
+### From UnityEvents
+
+Unity's event dropdown only lists methods that **return void and take at most one argument**. That rules out `Play` (it returns a `Sequence`) and `Stop` (an optional parameter is still a parameter, so it reads as two). `PlayAnimation` and `StopAnimation` are void wrappers that do appear — and a void `Play(string)` can't be an overload, because C# won't overload on return type alone.
+
+What a UI Animation Player offers in the dropdown:
+
+| Entry | Does |
+|---|---|
+| `PlayAnimation (string)` | Plays the animation you type in the box |
+| `StopAnimation (string)` | Stops it where it stands |
+| `StopAll (bool)` | Stops everything on this player. Tick the box to finish each one instead, as `COMPLETE` `REPORT` does (see [Interrupting](#interrupting)) |
+| `ApplyFromState (string)` | Snaps to an animation's FROM values without playing |
+| `CaptureBaseline ()` | Re-captures resting values |
+
+So a Button's **On Click** plays an animation with no glue script, and an animation's own **On Complete** starts the next one — chaining without code.
+
+Chaining is safe even though the next animation's **Interrupt Others** tries to kill the one whose callback is currently running: an animation releases its sequence *before* firing callbacks, so by then there is nothing left to interrupt. Two things follow:
+
+- An animation whose `On Complete` plays **itself** restarts cleanly instead of recursing. That's a loop, though — `Loops -1` says it far better.
+- **`StopAnimation` never fires `On Complete`**, so stopping a chain stops it dead. Only a natural finish carries it on. That's the existing rule for interrupted animations, and it's what makes a chain interruptible at all.
+- **Interrupting a chain with `COMPLETE` `REPORT` fires the interrupted animation's `On Complete`**, which tries to start the next link. That link is stopped straight away, so the animation doing the interrupting still ends up the only one running — but the `On Complete` itself has run, whatever else it does. Use `SILENT` if it shouldn't.
+
+`ApplyFromState` is the clean way to start hidden without authoring a separate state:
+
+```csharp
+private void Awake() => anim.ApplyFromState("Show");
+```
+
+In play mode the inspector shows **Play / Reset / Stop** buttons per animation so you can tune timing without a test script. `Reset` snaps to the FROM values without playing — it's `ApplyFromState`.
 
 ---
 
@@ -643,141 +769,6 @@ Where each step starts comes from replaying the animation from rest, the way the
 ## Notes
 
 Each animation has a free-text **`Notes`** box. Nothing reads it — it's for you: what this animates, what plays it, why that one weird delay is there. It travels with copy/paste and mirroring like any other field.
-
----
-
-## Console warnings
-
-Every warning this tool logs leads with who and what's going to happen, in bold, the consequence in capitals — then the details:
-
-> **UIAnimationPlayer on 'Panel': A STEP WILL BE SKIPPED.** Animation 'Show' step 2. It is a GraphicAlpha step with Target Path 'Icon', which matches nothing from 'Panel'.
-
-Click one to ping the object it's about. Problems with a step's target, clip or shader property are found once, when the player wakes, so they appear as play mode starts rather than on every `Play`.
-
----
-
-## Playing from code
-
-```csharp
-[SerializeField] private UIAnimationPlayer anim;
-
-anim.Play("Show");
-anim.Play("Hide", () => gameObject.SetActive(false));   // fires on a natural finish only
-
-// Play returns the live Sequence, so coroutines work:
-yield return anim.Play("Show").WaitForCompletion();
-```
-
-Full API:
-
-```csharp
-Sequence Play(string name);
-Sequence Play(string name, Action onComplete);
-Sequence Play(string name, Action<UIAnimationEndReason> onEnd);   // always fires, exactly once
-
-void Stop(string name, bool complete = false);   // complete: finish it, as Interrupt Others' COMPLETE REPORT does
-void StopAll(bool complete = false);
-
-void PlayAnimation(string name);    // void wrappers, so UnityEvents can call them
-void StopAnimation(string name);
-
-bool IsPlaying(string name);
-bool IsAnyPlaying { get; }
-bool Has(string name);
-
-void ApplyFromState(string name);   // snap to an animation's FROM values without playing
-void CaptureBaseline();             // re-capture resting values at runtime
-
-bool SetTo(string name, int step, float / Vector3 / Color / string value);    // a step's To, from code
-bool SetFrom(string name, int step, float / Vector3 / Color / string value);  // a step's From, from code
-void ClearOverrides(string name);   // back to the values authored in the Inspector
-```
-
-### Setting From and To from code
-
-Some endpoints are only known at runtime — the score a counter counts up to, the text a label types out, the colour of whichever team won. Author the step as usual, then replace its value from code before playing:
-
-```csharp
-anim.SetTo("CountUp", 0, score);     // step 0 = the top step in the Inspector
-anim.Play("CountUp");
-
-anim.SetFrom("CountUp", 0, oldScore);
-anim.SetTo("CountUp", 0, newScore);
-anim.Play("CountUp");
-```
-
-- **Steps are numbered from 0**, top to bottom, as the Inspector lists them. Reordering the steps changes the numbers, so keep a step you set from code where it is.
-- **The value means what typing it into the step would.** The step's mode still applies: a `Baseline` To lands on the resting value *plus* this, an `Absolute` one on exactly this. For "count to this number" use `Absolute`.
-- **Pass the kind of value the step tweens**: a number for a fade, a material float, an `int` or `float` member or a counted number; a `Vector3` for a move, size, scale or rotation (a `Vector2` converts on its own); a `Color`; a `string` for typed text. Punch and shake take their strength as their To. Anything else — a colour for a move, a value for a `SetActive` or sound step — is ignored with a warning, and the call returns `false`.
-- **`SetFrom` needs the step's From turned on** (the button reads `FROM`). A step without one starts from wherever the value already is and has no From to replace, so that is refused with a warning too. Punch and shake have no From.
-- **It lasts** for every later `Play` of that animation, until `ClearOverrides(name)` puts the Inspector's values back. An animation already running keeps the value it started with; `ApplyFromState` uses a From set from code.
-- **Only this player changes.** Nothing is written into the Inspector data, and an animation from a shared set is this player's own copy, so other players using the same set are unaffected.
-
-### Knowing how an animation ended
-
-`Play(name, Action)` fires **only on a natural finish**. That's the right rule for an authored `On Complete`, and the wrong one for code:
-
-```csharp
-anim.Play("Hide", () => Destroy(gameObject));   // leaks the object if anything interrupts the hide
-```
-
-The third overload closes that. Its callback fires **exactly once, whatever happens** — never zero times, never twice — and says how it ended:
-
-```csharp
-anim.Play("Hide", reason =>
-{
-    if (reason == UIAnimationEndReason.Completed) Destroy(gameObject);
-    else                                          gameObject.SetActive(false);
-});
-```
-
-| `UIAnimationEndReason` | When |
-|---|---|
-| `Completed` | Ran to its natural end — or `Stop(name, complete: true)`, or an animation with nothing to play, or an animation interrupting it with **Interrupt Others** set to `COMPLETE` `REPORT`. The only reason that also fires `On Complete`. |
-| `Interrupted` | Another `Play` cut it short: the same animation restarting, or a different one with **Interrupt Others** — including `COMPLETE` `SILENT`, which leaves it at its end state without counting as a finish. |
-| `Stopped` | `Stop`, `StopAll`, or a kill issued from outside the player such as `DOTween.KillAll`. |
-| `Disabled` | The GameObject or the player component was disabled while it was running. |
-| `Destroyed` | The player was destroyed while an animation was still live. |
-| `NotFound` | No animation of that name exists, so nothing played. A typo is a runtime failure like any other, and a caller waiting on a callback that never comes is what this overload exists to prevent. |
-
-Two things to know about it:
-
-- **Destroying an *enabled* object reports `Disabled`, not `Destroyed`.** Unity runs `OnDisable` before `OnDestroy` and gives no way to know a destroy is coming, so that's reported honestly rather than guessed at. `Destroyed` is what you get when **Kill On Disable** is off, or the object was already inactive. If you only care whether the animation finished, compare against `Completed` and ignore the rest.
-- **A kill from outside the player counts too.** `DOTween.KillAll()` or `DOTween.Clear()` elsewhere in the project resolves every armed callback as `Stopped` rather than leaving callers waiting.
-
-The plain `Action` overload and the authored `On Complete` UnityEvent are **unchanged** by any of this — still a natural finish only, because that's what "finished" means to someone who wired up an event in the Inspector. When both are present, `On Complete` runs first and `onEnd` last, so an authored event still gets to run before a caller's `Destroy`.
-
-One source-level wrinkle: `Play(name, null)` is now ambiguous between two overloads and needs a cast. `Play(name)` is unaffected.
-
-### From UnityEvents
-
-Unity's event dropdown only lists methods that **return void and take at most one argument**. That rules out `Play` (it returns a `Sequence`) and `Stop` (an optional parameter is still a parameter, so it reads as two). `PlayAnimation` and `StopAnimation` are void wrappers that do appear — and a void `Play(string)` can't be an overload, because C# won't overload on return type alone.
-
-What a UI Animation Player offers in the dropdown:
-
-| Entry | Does |
-|---|---|
-| `PlayAnimation (string)` | Plays the animation you type in the box |
-| `StopAnimation (string)` | Stops it where it stands |
-| `StopAll (bool)` | Stops everything on this player. Tick the box to finish each one instead, as `COMPLETE` `REPORT` does (see [Interrupting](#interrupting)) |
-| `ApplyFromState (string)` | Snaps to an animation's FROM values without playing |
-| `CaptureBaseline ()` | Re-captures resting values |
-
-So a Button's **On Click** plays an animation with no glue script, and an animation's own **On Complete** starts the next one — chaining without code.
-
-Chaining is safe even though the next animation's **Interrupt Others** tries to kill the one whose callback is currently running: an animation releases its sequence *before* firing callbacks, so by then there is nothing left to interrupt. Two things follow:
-
-- An animation whose `On Complete` plays **itself** restarts cleanly instead of recursing. That's a loop, though — `Loops -1` says it far better.
-- **`StopAnimation` never fires `On Complete`**, so stopping a chain stops it dead. Only a natural finish carries it on. That's the existing rule for interrupted animations, and it's what makes a chain interruptible at all.
-- **Interrupting a chain with `COMPLETE` `REPORT` fires the interrupted animation's `On Complete`**, which tries to start the next link. That link is stopped straight away, so the animation doing the interrupting still ends up the only one running — but the `On Complete` itself has run, whatever else it does. Use `SILENT` if it shouldn't.
-
-`ApplyFromState` is the clean way to start hidden without authoring a separate state:
-
-```csharp
-private void Awake() => anim.ApplyFromState("Show");
-```
-
-In play mode the inspector shows **Play / Reset / Stop** buttons per animation so you can tune timing without a test script. `Reset` snaps to the FROM values without playing — it's `ApplyFromState`.
 
 ---
 
