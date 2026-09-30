@@ -12,14 +12,24 @@ Step-by-step tutorials, examples, every feature explained, and troubleshooting.
 
 ## Installation
 
-Needs **Unity 2021.3+**, **DOTween Pro**, uGUI and TextMeshPro.
+Needs **Unity 2022.3+**, **DOTween Pro**, uGUI and TextMeshPro. Installs through the Package Manager, which is also how you update it.
 
 1. Import DOTween Pro.
-2. Run **`Tools → Demigiant → DOTween Utility Panel → Setup DOTween…`**, with the UI and TextMeshPro modules ticked. **Don't skip this**: without it, this folder won't compile, and the errors point at this code rather than the real cause.
-3. Copy this whole folder anywhere under `Assets/`, **including the `.meta` files**. Without them, every object already using the tool loses its component.
-4. **Add Component → UI Animation Player** on any UI object.
+2. Open **`Tools → Demigiant → DOTween Utility Panel`** and click **Setup DOTween…**, with the UI and TextMeshPro modules ticked.
+3. In the same panel, click **Create ASMDEF**.
+4. **`Window → Package Manager → + → Install package from git URL…`** and paste:
+   ```
+   https://github.com/rmfandyplayz/UnityUIAnimationTools.git?path=/DOTweenAnimationPlayer#v1.0.0
+   ```
+5. **Add Component → UI Animation Player** on any UI object.
 
-Don't add an `.asmdef` to this folder: it silently removes the DOTween shortcuts the tool is built on.
+**Moving over from a copied folder?** Delete the old copy from `Assets/` *before* step 4. Two copies clash. Objects keep their components, because the package uses the same script IDs.
+
+**Errors like `'RectTransform' does not contain a definition for 'DOAnchorPos'`** (seven of them, all in `UIAnimationStep.cs`) mean step 2 or 3 was skipped. Click the missing button and they go away.
+
+### Updating
+
+In your project's `Packages/manifest.json`, change the version at the end of the line (`#v1.0.0` → the newer one) and switch back to Unity. Or repeat step 4 with the new version in the URL. The versions are listed under the repo's [tags](https://github.com/rmfandyplayz/UnityUIAnimationTools/tags).
 
 More detail: [Installation](https://github.com/rmfandyplayz/UnityUIAnimationTools/wiki/Installation).
 
