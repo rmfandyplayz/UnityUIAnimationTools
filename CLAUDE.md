@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-**Keep this file current.** When a session changes something this file describes — a convention, a tool, a framework, a gotcha — update the relevant section in the same session, and add a new entry for anything non-obvious that was learned the hard way. The point of every entry below is to stop the next session rediscovering it. Prune entries that stop being true rather than letting them rot.
+**Keep this file current.** When a session changes something this file describes — a convention, a tool, a framework, a gotcha — update the relevant section in the same session, and add a new entry for anything non-obvious that was learned the hard way. The point of every entry below is to stop the next session rediscovering it. Prune entries that stop being true rather than letting them rot. Do not include unnecessary information. Be concise; summarize if extreme detail isn't needed.
 
 *(Copied in alongside the tool folders. If the project already has a CLAUDE.md, merge these sections into it rather than replacing it.)*
 
