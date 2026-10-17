@@ -19,6 +19,9 @@ namespace rmf_claude.DOTweenUI
     ///
     /// Inside a player's Shared Animations (UIAnimationSharedSection) it also greys every field out,
     /// puts an Override button where the note would be, and adds this player's own On Complete below.
+    ///
+    /// Everywhere else the header ends in a Pop Out button, which opens the animation in a window of its
+    /// own (UIAnimationWindow). While that window is open, the animation here is one line saying so.
     /// </summary>
     [CustomPropertyDrawer(typeof(UIAnimation))]
     internal class UIAnimationDrawer : PropertyDrawer
@@ -44,6 +47,30 @@ namespace rmf_claude.DOTweenUI
                 }
 
                 return noteStyle;
+            }
+        }
+
+        private const string PopOutTooltip =
+            "Opens this animation in a window of its own, where its From and To values can be recorded from the " +
+            "scene. The window stays open and keeps drawing the animation in the Scene view whatever is selected, " +
+            "so the objects it moves can be selected and posed. Here it shows as one line until the window closes.";
+
+        private static GUIStyle windowedStyle;
+
+        /// <summary>A label faded like DimFoldout's text, for an animation open in a window: a name with no arrow to click.</summary>
+        private static GUIStyle WindowedStyle
+        {
+            get
+            {
+                if (windowedStyle == null)
+                {
+                    windowedStyle = new GUIStyle(EditorStyles.label);
+                    Color color = windowedStyle.normal.textColor;
+                    color.a *= 0.45f;
+                    windowedStyle.normal.textColor = color;
+                }
+
+                return windowedStyle;
             }
         }
 
@@ -77,7 +104,7 @@ namespace rmf_claude.DOTweenUI
         public override float GetPropertyHeight(SerializedProperty property, GUIContent label)
         {
             float line = EditorGUIUtility.singleLineHeight;
-            if (!property.isExpanded) return line;
+            if (!property.isExpanded || WindowOf(property) != null) return line;
 
             float spacing = EditorGUIUtility.standardVerticalSpacing;
             UIAnimationPlayer viewer = UIAnimationSharedSection.PlayerOf(property.serializedObject);
@@ -103,6 +130,15 @@ namespace rmf_claude.DOTweenUI
             EditorGUI.BeginProperty(position, label, property);
 
             Rect header = new Rect(position.x, position.y, position.width, EditorGUIUtility.singleLineHeight);
+
+            UIAnimationWindow window = viewer == null ? WindowOf(property) : null;
+            if (window != null)
+            {
+                DrawWindowed(header, new GUIContent(string.IsNullOrEmpty(name) ? label.text : name, label.tooltip), window);
+                EditorGUI.EndProperty();
+                return;
+            }
+
             bool overridden;
             float side = DrawSide(header, property, viewer, name, out overridden);
 
@@ -120,6 +156,69 @@ namespace rmf_claude.DOTweenUI
         // ---------------------------------------------------------------- header note
 
         /// <summary>
+        /// The pop-up window showing this animation, or null. Only a player's own animations and a set's can
+        /// be popped out - a player's Shared Animations are read-only - and only with one object selected.
+        /// </summary>
+        private static UIAnimationWindow WindowOf(SerializedProperty property)
+        {
+            int index;
+            return CanPopOut(property, out index) ? UIAnimationWindow.Find(property.serializedObject.targetObject, index) : null;
+        }
+
+        private static bool CanPopOut(SerializedProperty property, out int index)
+        {
+            index = -1;
+
+            SerializedObject serialized = property.serializedObject;
+            if (serialized.isEditingMultipleObjects || UIAnimationSharedSection.PlayerOf(serialized) != null) return false;
+            if (!(serialized.targetObject is UIAnimationPlayer) && !(serialized.targetObject is UIAnimationAsset)) return false;
+
+            const string head = "Animations.Array.data[";
+            string path = property.propertyPath;
+
+            return path.StartsWith(head, System.StringComparison.Ordinal) && path.EndsWith("]", System.StringComparison.Ordinal)
+                && int.TryParse(path.Substring(head.Length, path.Length - head.Length - 1), out index);
+        }
+
+        /// <summary>
+        /// The one line an animation open in a window gets: its name, a note, and Focus. It is only edited in
+        /// the window while that is open, so the same fields are never being changed in two places.
+        /// </summary>
+        private static void DrawWindowed(Rect header, GUIContent name, UIAnimationWindow window)
+        {
+            var focus = new GUIContent("Focus", "Brings its window to the front.");
+            float buttonWidth = EditorStyles.miniButton.CalcSize(focus).x + 8f;
+            var button = new Rect(header.xMax - buttonWidth, header.y + 1f, buttonWidth, header.height - 2f);
+
+            if (GUI.Button(button, focus, EditorStyles.miniButton)) window.Focus();
+
+            var note = new GUIContent("open in a window", "It is edited in its own window while that is open. Close the " +
+                                                          "window to edit it here again.");
+            float noteWidth = NoteStyle.CalcSize(note).x;
+            GUI.Label(new Rect(button.x - noteWidth - 4f, header.y, noteWidth, header.height), note, NoteStyle);
+
+            // Past where the arrow would be, so the name lines up with the other animations' names.
+            float arrow = EditorStyles.foldout.padding.left - EditorStyles.label.padding.left;
+            var text = new Rect(header.x + arrow, header.y, Mathf.Max(0f, button.x - noteWidth - 8f - header.x - arrow), header.height);
+            GUI.Label(EditorGUI.IndentedRect(text), name, WindowedStyle);
+        }
+
+        private static float DrawPopOutButton(Rect header, Object target, int index)
+        {
+            var content = new GUIContent("Pop Out", PopOutTooltip);
+            float width = EditorStyles.miniButton.CalcSize(content).x + 8f;
+            var rect = new Rect(header.xMax - width, header.y + 1f, width, header.height - 2f);
+
+            if (GUI.Button(rect, content, EditorStyles.miniButton))
+            {
+                UIAnimationWindow.Open(target, index);
+                GUIUtility.ExitGUI();
+            }
+
+            return width + 4f;
+        }
+
+        /// <summary>
         /// The note or button at the end of the header row. Returns how much of the row it took. Drawn
         /// before the foldout, which would otherwise take the button's clicks - the whole row toggles it.
         /// </summary>
@@ -129,6 +228,16 @@ namespace rmf_claude.DOTweenUI
             overridden = false;
             string note = null;
             string tooltip = null;
+
+            // Pop Out sits at the very end, with any note to its left.
+            float taken = 0f;
+            int index;
+
+            if (viewer == null && CanPopOut(property, out index))
+            {
+                taken = DrawPopOutButton(header, property.serializedObject.targetObject, index);
+                header.xMax -= taken;
+            }
 
             var owner = property.serializedObject.targetObject as UIAnimationPlayer;
             var asset = property.serializedObject.targetObject as UIAnimationAsset;
@@ -166,13 +275,13 @@ namespace rmf_claude.DOTweenUI
                 }
             }
 
-            if (note == null) return 0f;
+            if (note == null) return taken;
 
             var content = new GUIContent(note, tooltip);
             float width = NoteStyle.CalcSize(content).x;
 
             GUI.Label(new Rect(header.xMax - width, header.y, width, header.height), content, NoteStyle);
-            return width + 4f;
+            return taken + width + 4f;
         }
 
         private static float DrawOverrideButton(Rect header, SerializedProperty property, UIAnimationPlayer viewer)

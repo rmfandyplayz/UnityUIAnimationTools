@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using DG.Tweening;
 using DG.DOTweenEditor;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 
 namespace rmf_claude.DOTweenUI
@@ -37,7 +38,8 @@ namespace rmf_claude.DOTweenUI
     /// instance's overrides on its own, and an unwind on entering play mode, assembly reload and
     /// selection change. The last one waits until the selection leaves the preview altogether:
     /// selecting one of the objects it animates keeps it running, because that is how an object gets
-    /// posed for Use Current Value.
+    /// posed. A preview a pop-up animation window started belongs to the window, and a recording
+    /// session holds its preview open whatever is selected (Hold).
     ///
     /// Within one player a preview chains: a second Play carries on from where the first ends, so
     /// a Close can be previewed straight after its Open. One still running is finished first, so
@@ -71,6 +73,21 @@ namespace rmf_claude.DOTweenUI
         private static Sequence running;
         private static string lastPlayed;
 
+        // Whatever is holding the preview open - a record session - so that no other owner, no selection
+        // change and no Stop and Restore button ends it. Only End itself, which play mode and a recompile
+        // still call, gets past it.
+        private static object holder;
+
+        // The Undo group the resting state was last recorded into: by Begin, or by Hold joining a preview
+        // already running - so a record session can fold everything since it started into one step.
+        private static int undoGroup = -1;
+
+        /// <summary>
+        /// Raised at the end of End, once everything is back at rest - whoever called it. A record session
+        /// listens, since a preview ended under it has nothing left to measure from.
+        /// </summary>
+        public static event System.Action Ended;
+
         private static readonly List<Object> previewTargets = new List<Object>();
         private static readonly List<Object> scratch = new List<Object>();
 
@@ -82,6 +99,14 @@ namespace rmf_claude.DOTweenUI
             AssemblyReloadEvents.beforeAssemblyReload += End;
             EditorApplication.playModeStateChanged += OnPlayModeChanged;
             Selection.selectionChanged += OnSelectionChanged;
+            EditorSceneManager.sceneClosing += OnSceneClosing;
+
+            // A scene saved mid-preview would otherwise keep whatever frame the preview was showing - or the
+            // pose being recorded - as if it had been authored, and a material instance with it.
+            EditorSceneManager.sceneSaving += OnSceneSaving;
+            EditorSceneManager.sceneSaved += OnSceneSaved;
+            PrefabStage.prefabSaving += OnPrefabSaving;
+            PrefabStage.prefabSaved += OnPrefabSaved;
         }
 
         public static bool IsPreviewing(UIAnimationPlayer player)
@@ -92,6 +117,88 @@ namespace rmf_claude.DOTweenUI
         public static bool IsPreviewing()
         {
             return previewing != null;
+        }
+
+        /// <summary>
+        /// The Undo group the running preview last recorded the resting state into, or -1: where it began, or
+        /// where Hold joined it. Everything from there is the preview's - or the recording's.
+        /// </summary>
+        public static int UndoGroup
+        {
+            get { return ReferenceEquals(previewing, null) ? -1 : undoGroup; }
+        }
+
+        /// <summary>
+        /// Starts a preview on this player without playing or moving anything - or keeps the one already
+        /// running on it, wherever it has got to, refreshed to cover anything added since - and holds it
+        /// open for holder: no other owner, selection change or Stop and Restore button ends it until
+        /// Release. A preview on another player is ended first. For the record session, which needs the
+        /// resting values captured before the user poses anything, and needs them put back afterwards.
+        /// False when no preview can run.
+        /// </summary>
+        public static bool Hold(object holder, UIAnimationPlayer player)
+        {
+            if (player == null || EditorApplication.isPlayingOrWillChangePlaymode) return false;
+
+            if (IsPreviewing(player))
+            {
+                // Joined where it stands. Its resting state is recorded again, in a group of its own, so the
+                // recording can be one Undo step without taking everything since the first Play with it.
+                Refresh(player, true);
+            }
+            else
+            {
+                End();
+                Begin(holder, player);
+            }
+
+            owner = holder;
+            UIAnimationPreview.holder = holder;
+            return true;
+        }
+
+        /// <summary>Lets go of a preview Hold kept open. It keeps running, still owned by holder.</summary>
+        public static void Release(object holder)
+        {
+            if (ReferenceEquals(UIAnimationPreview.holder, holder)) UIAnimationPreview.holder = null;
+        }
+
+        /// <summary>
+        /// Makes the running preview cover whatever was added since it began - a step, or a target filled
+        /// in - by doing what a second Play does before it plays: back to rest, re-initialise, put the
+        /// current state back. A running animation is finished first, as Play would.
+        /// </summary>
+        public static void Refresh(UIAnimationPlayer player)
+        {
+            Refresh(player, false);
+        }
+
+        private static void Refresh(UIAnimationPlayer player, bool recordRest)
+        {
+            if (!IsPreviewing(player)) return;
+
+            FinishRunning();
+            Halt();
+            player.StopAll();
+
+            // Undo keeps the state an object is in when it is recorded, and this is the one moment the
+            // targets are back at rest.
+            System.Action atRest = null;
+            if (recordRest)
+            {
+                atRest = () =>
+                {
+                    Undo.IncrementCurrentGroup();
+                    undoGroup = Undo.GetCurrentGroup();
+
+                    if (previewTargets.Count > 0) Undo.RecordObjects(previewTargets.ToArray(), "UI Animation Preview");
+                };
+            }
+
+            player.EditorContinuePreview(false, atRest);
+            RecordNewTargets(player);
+
+            SceneView.RepaintAll();
         }
 
         /// <summary>
@@ -130,7 +237,9 @@ namespace rmf_claude.DOTweenUI
                 player.EditorContinuePreview(startOver);
                 RecordNewTargets(player);
 
-                owner = requester;
+                // A held preview stays with its holder, or an inspector that played on it last could
+                // end it from under a recording just by being closed.
+                if (holder == null) owner = requester;
             }
 
             lastPlayed = animationName;
@@ -178,9 +287,14 @@ namespace rmf_claude.DOTweenUI
             previewTargets.Clear();
             player.EditorCollectTargets(previewTargets);
 
-            // The gizmos and Use Current measure against rest, which from here on is not what the
-            // objects hold.
+            // The gizmos and the record session measure against rest, which from here on is not what
+            // the objects hold.
             UIAnimationSimulation.NoteRest(previewTargets);
+            UIAnimationSimulation.NoteRest(player);
+
+            // A group of its own, so a record session can fold everything from here into one Undo step.
+            Undo.IncrementCurrentGroup();
+            undoGroup = Undo.GetCurrentGroup();
 
             if (previewTargets.Count > 0)
             {
@@ -194,6 +308,8 @@ namespace rmf_claude.DOTweenUI
 
             previewing = player;
             owner = requester;
+
+            RebuildInspectorsShowingMaterials();
         }
 
         /// <summary>
@@ -207,6 +323,7 @@ namespace rmf_claude.DOTweenUI
             player.EditorCollectTargets(scratch);
 
             UIAnimationSimulation.NoteRest(scratch);
+            UIAnimationSimulation.NoteRest(player);
 
             for (int i = 0; i < scratch.Count; i++)
             {
@@ -256,6 +373,11 @@ namespace rmf_claude.DOTweenUI
             previewing.StopAll();
             previewing.EditorRestoreBaselines();
 
+            // Out of play mode a material instance sits on the scene object like any edit, and saving the
+            // scene would keep a copy of it, cut off from the material asset.
+            previewing.EditorReleaseMaterials();
+            RebuildInspectorsShowingMaterials();
+
             UIAnimationStep.EditorSuppressSound = false;
 
             // The restore wrote through plain property setters, which do not mark a prefab
@@ -268,11 +390,15 @@ namespace rmf_claude.DOTweenUI
             previewTargets.Clear();
             previewing = null;
             owner = null;
+            holder = null;
             lastPlayed = null;
+            undoGroup = -1;
 
             UIAnimationSimulation.ForgetRest();
 
             SceneView.RepaintAll();
+
+            if (Ended != null) Ended();
         }
 
         /// <summary>
@@ -287,9 +413,25 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         public static void EndIfOwnedBy(object requester)
         {
+            EndIfOwnedBy(requester, false);
+        }
+
+        /// <summary>
+        /// As above, but evenIfSelected ends it wherever the selection is - for a pop-up animation window
+        /// being closed, which is a deliberate act, where a selection change is a side effect.
+        /// </summary>
+        public static void EndIfOwnedBy(object requester, bool evenIfSelected)
+        {
             if (ReferenceEquals(previewing, null) || !ReferenceEquals(owner, requester)) return;
 
-            if (SelectionIsOnPreview())
+            // Held open by someone else - a recording - which ends it itself.
+            if (holder != null && !ReferenceEquals(holder, requester))
+            {
+                owner = holder;
+                return;
+            }
+
+            if (!evenIfSelected && SelectionIsOnPreview())
             {
                 owner = null;
                 return;
@@ -306,7 +448,7 @@ namespace rmf_claude.DOTweenUI
         /// </summary>
         private static void OnSelectionChanged()
         {
-            if (ReferenceEquals(previewing, null) || owner != null) return;
+            if (ReferenceEquals(previewing, null) || owner != null || holder != null) return;
 
             if (!SelectionIsOnPreview()) End();
         }
@@ -372,8 +514,22 @@ namespace rmf_claude.DOTweenUI
         private static readonly GUIContent StopAllLabel = new GUIContent("Stop All",
             "Stops every animation on this player where it stands. On Complete does not fire.");
 
+        private static readonly GUIContent PlayModeRestoreLabel = new GUIContent("Stop and Restore",
+            "Stops every animation on this player and puts back every value its steps animate as it was when the " +
+            "player started up - the values Baseline measures from. A play-mode testing aid: there is no code " +
+            "equivalent, and it is not undone when play mode ends, since nothing in play mode is kept anyway.");
+
+        private const string PlayModeNote =
+            "In play mode these buttons call the player itself, as your code would. An animation with no From plays " +
+            "from wherever things are, so once it has played, Play again has nowhere left to go, and Reset only " +
+            "moves steps that have a From. Stop and Restore puts everything back to replay it.";
+
         private static readonly GUIContent StopAndRestoreLabel = new GUIContent("Stop and Restore",
             "Ends the preview and puts every value it touched back exactly as it was before the first Play.");
+
+        private static readonly GUIContent HeldLabel = new GUIContent("Recording - Finish or Cancel in its window",
+            "A pop-up animation window is recording values from this preview. Its Finish button keeps them and its " +
+            "Cancel button drops them; either one ends the preview and puts every value back.");
 
         /// <summary>
         /// One animation's row of buttons: the runtime API in play mode, this preview out of it.
@@ -411,7 +567,29 @@ namespace rmf_claude.DOTweenUI
         {
             if (Application.isPlaying)
             {
+                EditorGUILayout.BeginHorizontal();
+
                 if (GUILayout.Button(StopAllLabel)) player.StopAll();
+
+                if (GUILayout.Button(PlayModeRestoreLabel))
+                {
+                    player.StopAll();
+                    player.EditorRestoreBaselines();
+                }
+
+                EditorGUILayout.EndHorizontal();
+                EditorGUILayout.HelpBox(PlayModeNote, MessageType.None);
+                return;
+            }
+
+            if (holder != null && IsPreviewing(player))
+            {
+                // The recording's Finish and Cancel end it, and say which of the two happens to the pose.
+                using (new EditorGUI.DisabledScope(true))
+                {
+                    GUILayout.Button(HeldLabel);
+                }
+
                 return;
             }
 
@@ -427,10 +605,104 @@ namespace rmf_claude.DOTweenUI
             "same animation again starts it over. Stop and " +
             "Restore puts every value back as it was before the first Play, and the whole preview is " +
             "one Undo step (Ctrl+Z) if it goes wrong. Selecting something the preview does not animate, " +
-            "or entering play mode, stops and restores it too - selecting one of the objects it animates, " +
-            "to pose it for Use Current Value, keeps it running.\n\n" +
+            "or entering play mode, stops and restores it too - selecting one of the objects it animates " +
+            "keeps it running, and so does a pop-up animation window that started it, until it is closed.\n\n" +
             "Sound steps are skipped, and On Complete events do not fire, so nothing in the " +
             "animation can run game code while you are not in play mode.";
+
+        /// <summary>
+        /// A scene closing with the previewed player in it takes the objects with it, so the preview has to
+        /// end first - or a recording would be left holding a player that is gone.
+        /// </summary>
+        private static void OnSceneClosing(UnityEngine.SceneManagement.Scene scene, bool removingScene)
+        {
+            if (previewing != null && previewing.gameObject.scene == scene) End();
+        }
+
+        // The player parked for a save in progress, so the same one is put back afterwards.
+        private static UIAnimationPlayer parked;
+
+        /// <summary>
+        /// A scene being saved with the preview running in it is written with every animated value at rest and
+        /// every Graphic's own material, then put back exactly as it was (OnSceneSaved): the preview, and any
+        /// recording, carries on as if nothing happened. Through plain property setters, so nothing is recorded
+        /// for Undo and the scene is not marked as changed again once saved.
+        /// </summary>
+        private static void OnSceneSaving(UnityEngine.SceneManagement.Scene scene, string path)
+        {
+            if (previewing != null && previewing.gameObject.scene == scene) Park();
+        }
+
+        private static void OnSceneSaved(UnityEngine.SceneManagement.Scene scene)
+        {
+            Unpark();
+        }
+
+        private static void OnPrefabSaving(GameObject root)
+        {
+            if (previewing != null && root != null && previewing.gameObject.scene == root.scene) Park();
+        }
+
+        private static void OnPrefabSaved(GameObject root)
+        {
+            Unpark();
+        }
+
+        private static void Park()
+        {
+            if (parked != null) return;
+
+            parked = previewing;
+            parked.EditorPark();
+
+            // In case the save fails before saying it has saved.
+            EditorApplication.delayCall -= Unpark;
+            EditorApplication.delayCall += Unpark;
+        }
+
+        private static void Unpark()
+        {
+            if (parked == null) return;
+
+            UIAnimationPlayer player = parked;
+            parked = null;
+
+            if (player == previewing) player.EditorUnpark();
+        }
+
+        /// <summary>
+        /// The Inspector shows a Graphic's material at the bottom, built for whichever material it had when the
+        /// Inspector was built - so once the preview has given it an instance, or taken one back, an Inspector
+        /// showing it still edits the old one, and editing the asset there while the instance is on screen
+        /// looks like it does nothing. Rebuilt after the change, and only when a selected object is affected,
+        /// so the player's own Inspector is not rebuilt from under a click.
+        /// </summary>
+        private static void RebuildInspectorsShowingMaterials()
+        {
+            bool shown = false;
+            GameObject[] selected = Selection.gameObjects;
+
+            for (int i = 0; i < previewTargets.Count && !shown; i++)
+            {
+                var instance = previewTargets[i] as UIMaterialInstance;
+                if (instance == null) continue;
+
+                for (int s = 0; s < selected.Length; s++)
+                {
+                    if (selected[s] == instance.gameObject) shown = true;
+                }
+            }
+
+            if (!shown) return;
+
+            EditorApplication.delayCall -= RebuildInspectors;
+            EditorApplication.delayCall += RebuildInspectors;
+        }
+
+        private static void RebuildInspectors()
+        {
+            ActiveEditorTracker.sharedTracker.ForceRebuild();
+        }
 
         private static void OnPlayModeChanged(PlayModeStateChange change)
         {

@@ -968,8 +968,11 @@ namespace rmf_claude.DOTweenUI
         ///
         /// startOver puts back the state the previous Play started from first, which is how pressing
         /// Play twice on one animation runs it again from the same place rather than from its end.
+        ///
+        /// atRest runs at the one moment everything is back at rest and re-initialised, before the
+        /// current state is put back - the editor's record session takes its Undo record there.
         /// </summary>
-        public void EditorContinuePreview(bool startOver)
+        public void EditorContinuePreview(bool startOver, Action atRest = null)
         {
             previousRuntime.Clear();
             previousRuntime.AddRange(runtime);
@@ -981,6 +984,8 @@ namespace rmf_claude.DOTweenUI
 
             initialized = false;
             Initialize();
+
+            if (atRest != null) atRest();
 
             EditorRestoreSnapshots(previousRuntime);
             EditorCaptureSnapshots(runtime);
@@ -1037,6 +1042,84 @@ namespace rmf_claude.DOTweenUI
                 {
                     steps[s].RestoreBaseline();
                 }
+            }
+        }
+
+        /// <summary>
+        /// Gives every Graphic a material step instanced its own material back. Editor-only, for the end of
+        /// the preview - see UIMaterialInstance.EditorRelease.
+        /// </summary>
+        public void EditorReleaseMaterials()
+        {
+            for (int i = 0; i < runtime.Count; i++)
+            {
+                List<UIAnimationStep> steps = runtime[i].Steps;
+                for (int s = 0; s < steps.Count; s++)
+                {
+                    steps[s].EditorReleaseMaterial();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Puts every target at rest for a moment, noting where each stands so EditorUnpark can put it back,
+        /// and gives every Graphic a material step instanced its own material back meanwhile. Editor-only,
+        /// for saving a scene mid-preview: the file gets the resting values, and the preview carries on.
+        /// </summary>
+        public void EditorPark()
+        {
+            for (int i = 0; i < runtime.Count; i++)
+            {
+                List<UIAnimationStep> steps = runtime[i].Steps;
+                for (int s = 0; s < steps.Count; s++)
+                {
+                    steps[s].EditorPark();
+                }
+            }
+
+            EditorRestoreBaselines();
+
+            for (int i = 0; i < runtime.Count; i++)
+            {
+                List<UIAnimationStep> steps = runtime[i].Steps;
+                for (int s = 0; s < steps.Count; s++)
+                {
+                    steps[s].EditorShowSourceMaterial(true);
+                }
+            }
+        }
+
+        /// <summary>Undoes EditorPark: the instanced materials go back on, then every value it noted.</summary>
+        public void EditorUnpark()
+        {
+            for (int i = 0; i < runtime.Count; i++)
+            {
+                List<UIAnimationStep> steps = runtime[i].Steps;
+                for (int s = 0; s < steps.Count; s++)
+                {
+                    steps[s].EditorShowSourceMaterial(false);
+                }
+            }
+
+            for (int i = 0; i < runtime.Count; i++)
+            {
+                List<UIAnimationStep> steps = runtime[i].Steps;
+                for (int s = 0; s < steps.Count; s++)
+                {
+                    steps[s].EditorUnpark();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Every step this player plays, as the preview last initialised them - a shared animation's as
+        /// its runtime clone. Editor-only, for reading the resting values their baselines captured.
+        /// </summary>
+        public void EditorCollectSteps(List<UIAnimationStep> into)
+        {
+            for (int i = 0; i < runtime.Count; i++)
+            {
+                into.AddRange(runtime[i].Steps);
             }
         }
 

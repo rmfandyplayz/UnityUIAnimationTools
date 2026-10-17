@@ -33,6 +33,18 @@ namespace rmf_claude.DOTweenUI
         private bool ownsInstance;
         private bool initialized;
 
+    #if UNITY_EDITOR
+        // What the Graphic's material fields held before the instance went in, for EditorRelease and for a
+        // scene saved mid-preview. TMP keeps its instance in a serialized field of its own as well,
+        // m_fontMaterial, beside m_sharedMaterial.
+        private bool editorNoted;
+        private Material editorOriginal;
+        private Material editorOriginalFont;
+
+        private static readonly System.Reflection.FieldInfo FontMaterialField = typeof(TMP_Text).GetField("m_fontMaterial",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+    #endif
+
         /// <summary>The per-element material. Safe to write to.</summary>
         public Material Material
         {
@@ -63,6 +75,19 @@ namespace rmf_claude.DOTweenUI
             graphic = GetComponent<Graphic>();
             if (graphic == null) return;
 
+        #if UNITY_EDITOR
+            // Noted for the preview, which puts it back. The serialized field, not the getter: an Image with
+            // no material of its own reads back as the default UI material, and writing that back would give
+            // it one.
+            if (!Application.isPlaying)
+            {
+                var serialized = new UnityEditor.SerializedObject(graphic);
+                editorOriginal = EditorRead(serialized, graphic is TMP_Text ? "m_sharedMaterial" : "m_Material");
+                editorOriginalFont = graphic is TMP_Text ? EditorRead(serialized, "m_fontMaterial") : null;
+                editorNoted = true;
+            }
+        #endif
+
             // TextMeshProUGUI overrides materialForRendering to read m_sharedMaterial and ignores
             // Graphic.material entirely, so assigning a clone there would have no visible effect.
             // fontMaterial is TMP own instance, and TMP owns its lifetime - do not destroy it.
@@ -85,6 +110,83 @@ namespace rmf_claude.DOTweenUI
 
             WarnIfUnderStencilMask();
         }
+
+    #if UNITY_EDITOR
+        /// <summary>
+        /// Gives the Graphic back the material it had before the instance, and forgets the instance - for the
+        /// end of the edit-mode preview, the only thing that instances one out of play mode. There the
+        /// instance is assigned to a scene object like any edit, and a scene saved after a material preview
+        /// kept a copy of it inside the scene file, cut off from the material asset (measured). The next
+        /// read of Material makes a new instance.
+        /// </summary>
+        public void EditorRelease()
+        {
+            if (!initialized) return;
+
+            if (graphic != null && editorNoted)
+            {
+                var serialized = new UnityEditor.SerializedObject(graphic);
+                var text = graphic as TMP_Text;
+
+                EditorWrite(serialized, text != null ? "m_sharedMaterial" : "m_Material", editorOriginal);
+                if (text != null) EditorWrite(serialized, "m_fontMaterial", editorOriginalFont);
+
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+            }
+
+            if (ownsInstance && instance != null) DestroyImmediate(instance);
+
+            instance = null;
+            ownsInstance = false;
+            editorOriginal = null;
+            editorOriginalFont = null;
+            editorNoted = false;
+            initialized = false;
+        }
+
+        /// <summary>
+        /// The material the Graphic had before the edit-mode preview gave it the instance - the asset it was
+        /// copied from - or null when the preview has not. Editing this while the instance is on screen changes
+        /// nothing that shows, which is easy to do by accident.
+        /// </summary>
+        public Material EditorSource
+        {
+            get { return initialized && editorNoted ? editorOriginal : null; }
+        }
+
+        /// <summary>
+        /// For saving a scene mid-preview: true puts the Graphic's own material back in its fields for the save,
+        /// keeping the instance alive; false puts the instance back. Through the plain setters and TMP's field
+        /// itself, so the scene is not marked as changed again once it is saved.
+        /// </summary>
+        public void EditorShowSource(bool source)
+        {
+            if (!initialized || !editorNoted || graphic == null || instance == null) return;
+
+            var text = graphic as TMP_Text;
+            if (text == null)
+            {
+                graphic.material = source ? editorOriginal : instance;
+                return;
+            }
+
+            Material shared = source ? editorOriginal : instance;
+            if (shared != null) text.fontSharedMaterial = shared;
+            if (FontMaterialField != null) FontMaterialField.SetValue(text, source ? editorOriginalFont : instance);
+        }
+
+        private static Material EditorRead(UnityEditor.SerializedObject serialized, string field)
+        {
+            UnityEditor.SerializedProperty property = serialized.FindProperty(field);
+            return property != null ? property.objectReferenceValue as Material : null;
+        }
+
+        private static void EditorWrite(UnityEditor.SerializedObject serialized, string field, Material value)
+        {
+            UnityEditor.SerializedProperty property = serialized.FindProperty(field);
+            if (property != null) property.objectReferenceValue = value;
+        }
+    #endif
 
         /// <summary>
         /// A stencil Mask makes UGUI take a one-time cached copy of this material and never re-sync it,

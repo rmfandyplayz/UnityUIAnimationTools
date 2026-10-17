@@ -18,7 +18,8 @@ namespace rmf_claude.DOTweenUI
     /// Scene-view editing for a step's movement path: the path drawn where the object will actually
     /// travel, with handles to drag its points, a + on every segment to add one, and Ctrl+click to
     /// remove one. Started from the step's "Edit Path in Scene" button, and ended by that button,
-    /// Esc, the overlay's Done button, a selection change, a play-mode change or a recompile.
+    /// Esc, the overlay's Done button, a selection change (unless the step's animation is open in a pop-up window),
+    /// a play-mode change or a recompile.
     ///
     /// It follows Unity's own Edit Collider pattern rather than drawing handles whenever a step
     /// happens to be expanded: while editing, the transform tool is hidden and clicks on empty space
@@ -78,6 +79,12 @@ namespace rmf_claude.DOTweenUI
         }
 
         // ---------------------------------------------------------------- API for the drawer
+
+        /// <summary>Whether any path is being edited.</summary>
+        public static bool IsActive
+        {
+            get { return player != null; }
+        }
 
         public static bool IsEditing(SerializedProperty step)
         {
@@ -190,7 +197,14 @@ namespace rmf_claude.DOTweenUI
 
         private static void OnSelectionChanged()
         {
-            if (player != null && Selection.activeGameObject != player.gameObject) Stop();
+            if (player == null || Selection.activeGameObject == player.gameObject) return;
+
+            // The step's animation is open in a pop-up window, which stays open whatever is selected - so does this.
+            int animation;
+            int step;
+            if (UIAnimationTargets.TryParseStepPath(stepPath, out animation, out step) && UIAnimationWindow.Find(player, animation) != null) return;
+
+            Stop();
         }
 
         private static void OnPlayModeChanged(PlayModeStateChange change)
@@ -496,7 +510,7 @@ namespace rmf_claude.DOTweenUI
         /// because the start point sits on the object itself, and white text on a white Image is
         /// simply not there.
         /// </summary>
-        private static void Label(Vector3 world, string text, float liftPixels)
+        internal static void Label(Vector3 world, string text, float liftPixels)
         {
             if (Event.current.type != EventType.Repaint) return;
 
@@ -508,8 +522,11 @@ namespace rmf_claude.DOTweenUI
                 };
             }
 
+            // At least as wide as before, so the path editor's short labels sit exactly where they did.
+            float width = Mathf.Max(80f, labelStyle.CalcSize(new GUIContent(text)).x + 8f);
+
             Vector2 at = HandleUtility.WorldToGUIPoint(world);
-            var rect = new Rect(at.x - 40f, at.y - 9f - liftPixels, 80f, 18f);
+            var rect = new Rect(at.x - width * 0.5f, at.y - 9f - liftPixels, width, 18f);
 
             Handles.BeginGUI();
 
