@@ -3,9 +3,11 @@
 | Branch | What it is |
 | --- | --- |
 | `main` | All internal changes. Users don't see this. |
-| `release` | What projects install. It only changes when published. |
+| `release` | What projects install. It only changes when published. It's the repo's default branch, so it's what visitors see first. |
 
 **Publishing means copying `main` into `release`.**
+
+Because `release` is the default, GitHub picks it as the target of every new pull request. **Any pull request that isn't a release should target `main`**: check the **base** dropdown when opening one.
 
 ## Publishing
 
@@ -17,7 +19,17 @@
 4. Click **Merge pull request**, then **Confirm merge**.
    - The green button must say **Merge pull request**. If it says *Squash and merge* or *Rebase and merge*, click the little arrow beside it and choose **Create a merge commit**. The other two can make the *next* release run into conflicts.
 
-Done. The pull request stays on the repo's **Pull requests → Closed** tab, which doubles as a release history.
+The pull request stays on the repo's **Pull requests → Closed** tab, which doubles as a release history.
+
+## After publishing: catch `main` up
+
+The merge in step 4 makes a commit that only `release` has, so GitHub will show `main` as "1 commit behind `release`". To clear it, run this in the repo folder:
+
+```bash
+git checkout main && git pull && git merge --ff-only origin/release && git push
+```
+
+It only moves `main` forward to the merge commit; nothing is rewritten. It's optional. Skipping it does no harm, and the next release works either way.
 
 ## Updating a project
 

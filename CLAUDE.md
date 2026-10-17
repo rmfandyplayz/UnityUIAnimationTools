@@ -32,6 +32,7 @@ The other two are still loose folders. Projects install from the **`release` bra
 
 - **Bump `version` in `package.json` with the first change to the package after each release.** If it still equals `git show origin/release:DOTweenAnimationPlayer/package.json`, bump it in the same commit: patch for fixes, minor for additions, major for anything breaking saved data or the public API. The author doesn't bump it.
 - **Never commit to or rewrite `release`.** It only receives merge commits from `main`. A squash merge would leave the same changes under different commits and the next merge conflicting with itself.
+- **`release` is GitHub's default branch, but `main` is where work happens.** Branch from `main`, and open every PR with `--base main` (`gh pr create` otherwise targets `release`). The author chose this so the repo page shows released code. After a release, `main` may be fast-forwarded to `origin/release` (`merge --ff-only`) to absorb the merge commit; that's the only way `release` flows back.
 - **Commit every new file's and folder's `.meta`.** Unity ignores a meta-less asset in a read-only git package, so a missing one only shows up in projects that install it.
 - The install URL never changes, so a release needs no README or wiki edit.
 
