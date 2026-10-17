@@ -16,9 +16,12 @@ namespace rmf_claude.DOTweenUI
     /// <summary>
     /// Scene-view drawings of what a player's animations do: a line with arrows for every position
     /// step, and a row of outlines from first to last moment for every size, offset or scale step.
+    /// A position step's end dot - and its start ring, when it has a From - can be dragged to move
+    /// that value, on the inspected object's own animations (not a player's Shared Animations).
     ///
     /// Drawn only for the player being inspected - or the Preview On player of a shared asset being
-    /// inspected - and only out of play mode. Where each step starts comes from UIAnimationSimulation,
+    /// inspected - and for an animation open in a pop-up window, which draws its own whatever is selected;
+    /// only out of play mode. Where each step starts comes from UIAnimationSimulation,
     /// which replays the animation from rest the way the preview plays it, so the drawings hold still
     /// while a preview moves the real objects around underneath them.
     ///
@@ -93,6 +96,8 @@ namespace rmf_claude.DOTweenUI
             var content = new GUIContent("Scene Gizmos: " + ShowNames[(int)Mode],
                 "What the Scene view draws for this player's animations: a line with arrows for each " +
                 "position step, and outlines from start to finish for each size, offset or scale step.\n\n" +
+                "Drag a position line's end dot to move its To, or its start ring to move its From " +
+                "(when the step has one).\n\n" +
                 "Expanded = open in the Inspector. Out of play mode only.");
 
             Rect rect = GUILayoutUtility.GetRect(content, EditorStyles.popup);
@@ -176,19 +181,35 @@ namespace rmf_claude.DOTweenUI
         {
             public UIAnimationSimulation.Track Track;
             public bool Boxes;
+
+            // A position step whose endpoints can be dragged: the serialized step to write to, its
+            // two handles' control IDs, and what to call it while one is hovered. Step is null when
+            // the drawing is look-only.
+            public SerializedProperty Step;
+            public int FromId;
+            public int ToId;
+            public string Name;
         }
 
         private static readonly List<Drawing> drawings = new List<Drawing>();
         private static readonly List<string> localNames = new List<string>();
 
+        private static readonly int EndpointHint = "UIAnimationGizmoEndpoint".GetHashCode();
+
         /// <summary>
-        /// Draws the gizmos for one player. serialized is the inspected object - the player, or a shared
-        /// asset - and says which animations and steps are expanded; owner is the player whose scene
-        /// the steps resolve against.
+        /// Draws the gizmos for one player, with a draggable From and To on every position step the
+        /// inspected object owns. serialized is the inspected object - the player, or a shared asset -
+        /// says which animations and steps are expanded, and is what a drag writes through; owner is
+        /// the player whose scene the steps resolve against.
+        ///
+        /// only is a pop-up animation window's animation: that one alone, open or not. Otherwise every
+        /// animation the settings ask for, except those open in a window, which draw themselves.
+        ///
+        /// Runs for every event, not just Repaint, because the handles need the same control IDs in
+        /// the Layout, mouse and Repaint passes. Only Repaint draws.
         /// </summary>
-        public static void Draw(SerializedObject serialized, UIAnimationPlayer owner)
+        public static void Draw(SerializedObject serialized, UIAnimationPlayer owner, int only = -1)
         {
-            if (Event.current.type != EventType.Repaint) return;
             if (Mode == ShowMode.Disabled || owner == null || EditorApplication.isPlayingOrWillChangePlaymode) return;
 
             List<UIAnimation> animations = UIAnimationTargets.AnimationsOf(serialized);
@@ -197,24 +218,37 @@ namespace rmf_claude.DOTweenUI
             serialized.Update();
             SerializedProperty list = serialized.FindProperty("Animations");
 
+            bool repaint = Event.current.type == EventType.Repaint;
             drawings.Clear();
+            litNow = 0;
 
             for (int a = 0; a < animations.Count; a++)
             {
                 SerializedProperty animationProperty = list != null && a < list.arraySize ? list.GetArrayElementAtIndex(a) : null;
-                if (Mode != ShowMode.AllAnimations && !IsOpen(list, animationProperty)) continue;
+
+                if (only >= 0)
+                {
+                    if (a != only) continue;
+                }
+                else
+                {
+                    if (UIAnimationWindow.Find(serialized.targetObject, a) != null) continue;
+                    if (Mode != ShowMode.AllAnimations && !IsOpen(list, animationProperty)) continue;
+                }
 
                 SerializedProperty steps = animationProperty != null ? animationProperty.FindPropertyRelative("Steps") : null;
-                Collect(animations[a], owner, steps, Mode == ShowMode.ExpandedSteps, serialized.targetObject == owner ? a : -1);
+                Collect(animations[a], owner, steps, Mode == ShowMode.ExpandedSteps, serialized.targetObject == owner ? a : -1,
+                    true, repaint);
             }
 
             // A player also plays whatever its Shared asset adds, minus what its own animations override.
             // All Animations means all of it; otherwise what is expanded under Shared Animations says,
-            // through the player's view of the set.
+            // through the player's view of the set. Look-only: a drag here would change the set under
+            // every player using it, and the section greys these fields out for the same reason.
             var player = serialized.targetObject as UIAnimationPlayer;
             SerializedObject view = player != null ? UIAnimationSharedSection.ViewOf(player) : null;
 
-            if (player != null && player.EditorShared != null && (Mode == ShowMode.AllAnimations || view != null))
+            if (only < 0 && player != null && player.EditorShared != null && (Mode == ShowMode.AllAnimations || view != null))
             {
                 localNames.Clear();
                 for (int a = 0; a < animations.Count; a++)
@@ -233,22 +267,53 @@ namespace rmf_claude.DOTweenUI
                     if (Mode != ShowMode.AllAnimations && !IsOpen(sharedList, element)) continue;
 
                     Collect(shared[a], owner, element != null ? element.FindPropertyRelative("Steps") : null,
-                        Mode == ShowMode.ExpandedSteps, -1);
+                        Mode == ShowMode.ExpandedSteps, -1, false, repaint);
                 }
             }
 
+            bool changed = false;
+
             for (int i = 0; i < drawings.Count; i++)
             {
+                Drawing drawing = drawings[i];
                 Color color = ColorOf(i, drawings.Count);
 
                 // Neighbouring lines put their arrows at different points along themselves. An out-and-
                 // back pair draws the same line twice, and with the same spacing the return's arrows
                 // would land exactly on top of the outward ones and hide them.
-                if (drawings[i].Boxes) DrawOutlines(drawings[i].Track, color);
-                else DrawRoute(drawings[i].Track, color, i % 2 == 0 ? 0.5f : 0.25f);
+                if (drawing.Boxes)
+                {
+                    if (repaint) DrawOutlines(drawing.Track, color);
+                }
+                else
+                {
+                    if (repaint) DrawRoute(drawing.Track, color, i % 2 == 0 ? 0.5f : 0.25f);
+                    changed |= DrawEndpoints(drawing, color);
+                }
             }
 
             drawings.Clear();
+
+            // The Scene view does not repaint for a mouse move on its own, and the white ring and the
+            // name have to follow the mouse on and off an endpoint. Kept per caller: an Inspector and a
+            // window both draw in one pass, and a shared value would make each look changed to the other.
+            int lastLit;
+            lastLitBy.TryGetValue(serialized, out lastLit);
+
+            if (Event.current.type == EventType.MouseMove && litNow != lastLit) HandleUtility.Repaint();
+
+            if (Event.current.type == EventType.MouseMove || repaint)
+            {
+                if (lastLitBy.Count > 32) lastLitBy.Clear();
+                lastLitBy[serialized] = litNow;
+            }
+
+            if (changed)
+            {
+                Undo.SetCurrentGroupName("Move Animation Endpoint");
+                serialized.ApplyModifiedProperties();
+                UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+            }
         }
 
         private static bool IsOpen(SerializedProperty list, SerializedProperty element)
@@ -262,11 +327,15 @@ namespace rmf_claude.DOTweenUI
         /// the player's own.
         /// </summary>
         private static void Collect(UIAnimation animation, UIAnimationPlayer owner, SerializedProperty steps,
-            bool expandedStepsOnly, int animationIndex)
+            bool expandedStepsOnly, int animationIndex, bool editable, bool repaint)
         {
             // Each animation gets its own list: the drawings hold on to the tracks until everything is drawn.
+            // Only Repaint draws outlines, so the other passes skip working them out.
             var results = new List<UIAnimationSimulation.Track>();
-            UIAnimationSimulation.Run(animation, owner.gameObject, Outlines, results);
+            UIAnimationSimulation.Run(animation, owner.gameObject, repaint ? Outlines : 0, results);
+
+            // While a path is being edited, the Scene view belongs to it, as an Edit Collider mode would.
+            editable &= !UIAnimationPathEditor.IsActive && steps != null;
 
             for (int i = 0; i < results.Count; i++)
             {
@@ -304,12 +373,41 @@ namespace rmf_claude.DOTweenUI
                     continue;
                 }
 
+                var drawing = new Drawing { Track = track, Boxes = boxes };
+
+                // Taken before the filter below, and for every step that could have handles, so the
+                // IDs line up between passes even when a drag makes a step stop moving.
+                if (editable && !boxes && track.StepIndex < steps.arraySize && HasPlane(track.Rect.parent))
+                {
+                    drawing.Step = steps.GetArrayElementAtIndex(track.StepIndex);
+                    drawing.FromId = GUIUtility.GetControlID(EndpointHint, FocusType.Passive);
+                    drawing.ToId = GUIUtility.GetControlID(EndpointHint, FocusType.Passive);
+                    drawing.Name = (string.IsNullOrEmpty(animation.Name) ? "?" : animation.Name) + ", step " + track.StepIndex;
+                }
+
                 // Nothing to show for a step that goes nowhere - typically a Close worked out from
                 // rest, where it is already - and a dot or a stack of identical outlines is just noise.
-                if (!Moves(track)) continue;
+                // Kept while one of its handles is held, or dragging To onto From would drop it mid-drag.
+                if (!Moves(track) && !IsHeld(drawing.FromId) && !IsHeld(drawing.ToId)) continue;
 
-                drawings.Add(new Drawing { Track = track, Boxes = boxes });
+                drawings.Add(drawing);
             }
+        }
+
+        /// <summary>
+        /// Whether a point dragged in the world maps back to a position at all. Under a parent scaled
+        /// to zero on X or Y - a panel that pops in from nothing, or a Canvas that has not sized itself
+        /// yet - every value lands on one point, and a drag would write nonsense into the step.
+        /// </summary>
+        private static bool HasPlane(Transform parent)
+        {
+            if (parent == null) return true;
+            return Vector3.Cross(parent.TransformVector(Vector3.right), parent.TransformVector(Vector3.up)).sqrMagnitude > 1e-20f;
+        }
+
+        private static bool IsHeld(int id)
+        {
+            return id != 0 && GUIUtility.hotControl == id;
         }
 
         /// <summary>
@@ -365,13 +463,182 @@ namespace rmf_claude.DOTweenUI
             Handles.color = color;
             Handles.DrawAAPolyLine(3f, world.ToArray());
 
-            Vector3 start = world[0];
-            Vector3 end = world[world.Count - 1];
-
-            Handles.DrawWireDisc(start, normal, HandleUtility.GetHandleSize(start) * 0.05f, 2f);
-            Handles.DrawSolidDisc(end, normal, HandleUtility.GetHandleSize(end) * 0.045f);
-
             DrawArrows(normal, color, arrowPhase);
+        }
+
+        // ---------------------------------------------------------------- endpoint handles
+
+        private const float StartSize = 0.05f;
+        private const float EndSize = 0.045f;
+
+        /// <summary>
+        /// The ring at a position step's start and the dot at its end. Each is a handle when there is
+        /// an authored value behind it - To always, From only when the step has one - and a plain
+        /// marker otherwise: a step without From starts wherever the steps before it left the object,
+        /// which is nothing stored on this step. Returns true when a drag changed a value.
+        ///
+        /// A drag converts the dropped point back exactly as the simulation resolved it - into the
+        /// step's value space, minus whatever its mode adds - and leaves Z alone, as the path editor
+        /// does: it moves the point within the canvas plane and nothing else.
+        /// </summary>
+        private static bool DrawEndpoints(Drawing drawing, Color color)
+        {
+            UIAnimationSimulation.Track track = drawing.Track;
+            Transform parent = track.Rect.parent;
+            bool editable = drawing.Step != null;
+            bool changed = false;
+
+            Vector3 start = track.Frame.PositionToWorld(parent, track.Type, track.Start);
+            Vector3 end = track.Frame.PositionToWorld(parent, track.Type, track.End);
+
+            Vector3 moved;
+
+            bool released;
+
+            if (editable && track.HasFrom)
+            {
+                if (Endpoint(drawing.FromId, start, parent, StartSize, WireCap, color, drawing.Name + ": From", out moved, out released))
+                {
+                    SerializedProperty from = drawing.Step.FindPropertyRelative("FromVector");
+                    from.vector3Value = Authored(track, moved, track.FromOrigin, from.vector3Value);
+                    changed = true;
+                }
+
+                if (released && track.Snaps) changed |= RoundOff(drawing.Step.FindPropertyRelative("FromVector"));
+            }
+            else if (Event.current.type == EventType.Repaint)
+            {
+                Handles.color = color;
+                WireCap(0, start, parent != null ? parent.rotation : Quaternion.identity, HandleUtility.GetHandleSize(start) * StartSize, EventType.Repaint);
+            }
+
+            if (editable)
+            {
+                if (Endpoint(drawing.ToId, end, parent, EndSize, SolidCap, color, drawing.Name + ": To", out moved, out released))
+                {
+                    SerializedProperty to = drawing.Step.FindPropertyRelative("ToVector");
+                    to.vector3Value = Authored(track, moved, track.ToOrigin, to.vector3Value);
+                    changed = true;
+                }
+
+                if (released && track.Snaps) changed |= RoundOff(drawing.Step.FindPropertyRelative("ToVector"));
+            }
+            else if (Event.current.type == EventType.Repaint)
+            {
+                Handles.color = color;
+                SolidCap(0, end, parent != null ? parent.rotation : Quaternion.identity, HandleUtility.GetHandleSize(end) * EndSize, EventType.Repaint);
+            }
+
+            return changed;
+        }
+
+        /// <summary>
+        /// A snapping step's dragged value, rounded to whole numbers once it is let go - not during the
+        /// drag, which would make the point jump from pixel to pixel under the mouse. Halves round away
+        /// from zero (0.5 to 1, -0.5 to -1), not to even as Mathf.Round does. It is the typed number that
+        /// is rounded, so the Inspector shows a whole number; playback rounds where it lands anyway.
+        /// </summary>
+        private static bool RoundOff(SerializedProperty property)
+        {
+            Vector3 value = property.vector3Value;
+            var rounded = new Vector3(RoundHalfAway(value.x), RoundHalfAway(value.y), value.z);
+
+            if (rounded == value) return false;
+
+            property.vector3Value = rounded;
+            return true;
+        }
+
+        private static float RoundHalfAway(float value)
+        {
+            return (float)System.Math.Round(value, System.MidpointRounding.AwayFromZero);
+        }
+
+        private static Vector3 Authored(UIAnimationSimulation.Track track, Vector3 world, Vector3 origin, Vector3 previous)
+        {
+            Vector3 value = track.Frame.WorldToPosition(track.Rect.parent, track.Type, world) - origin;
+            value.z = previous.z;
+            return value;
+        }
+
+        /// <summary>
+        /// One endpoint, dragged within the canvas plane. Named in a label while hovered or held, which
+        /// is how two endpoints sitting on top of each other - an Open's To on a Close's From - are told
+        /// apart: the one named is the one a click takes.
+        /// </summary>
+        private static bool Endpoint(int id, Vector3 world, Transform parent, float sizeFactor, Handles.CapFunction cap,
+            Color color, string name, out Vector3 moved, out bool released)
+        {
+            Quaternion rotation = parent != null ? parent.rotation : Quaternion.identity;
+            float size = HandleUtility.GetHandleSize(world) * sizeFactor;
+
+            Handles.color = color;
+
+            bool wasHeld = IsHeld(id);
+
+            EditorGUI.BeginChangeCheck();
+            moved = Handles.Slider2D(id, world, Vector3.zero, rotation * Vector3.forward, rotation * Vector3.right,
+                rotation * Vector3.up, size, cap, Vector2.zero, false);
+            bool changed = EditorGUI.EndChangeCheck();
+
+            released = wasHeld && !IsHeld(id);
+
+            if (IsLit(id))
+            {
+                litNow = id;
+                UIAnimationPathEditor.Label(world, name, 18f);
+            }
+
+            return changed;
+        }
+
+        // The endpoint lit in this pass, and in the last pass that drew or moved the mouse for each caller,
+        // 0 for none.
+        private static int litNow;
+        private static readonly Dictionary<SerializedObject, int> lastLitBy = new Dictionary<SerializedObject, int>();
+
+        /// <summary>Hovered with nothing held, or held.</summary>
+        private static bool IsLit(int id)
+        {
+            return id != 0 && (GUIUtility.hotControl == id || (GUIUtility.hotControl == 0 && HandleUtility.nearestControl == id));
+        }
+
+        // Pickable a little beyond what is drawn, since the dots are small.
+        private const float PickScale = 1.6f;
+
+        private static void WireCap(int id, Vector3 position, Quaternion rotation, float size, EventType eventType)
+        {
+            if (eventType == EventType.Layout)
+            {
+                HandleUtility.AddControl(id, HandleUtility.DistanceToCircle(position, size * PickScale));
+            }
+            else if (eventType == EventType.Repaint)
+            {
+                Handles.DrawWireDisc(position, rotation * Vector3.forward, size, 2f);
+                if (IsLit(id)) DrawLit(position, rotation, size);
+            }
+        }
+
+        private static void SolidCap(int id, Vector3 position, Quaternion rotation, float size, EventType eventType)
+        {
+            if (eventType == EventType.Layout)
+            {
+                HandleUtility.AddControl(id, HandleUtility.DistanceToCircle(position, size * PickScale));
+            }
+            else if (eventType == EventType.Repaint)
+            {
+                Handles.DrawSolidDisc(position, rotation * Vector3.forward, size);
+                if (IsLit(id)) DrawLit(position, rotation, size);
+            }
+        }
+
+        /// <summary>A white ring round a hovered or held endpoint.</summary>
+        private static void DrawLit(Vector3 position, Quaternion rotation, float size)
+        {
+            Color previous = Handles.color;
+            Handles.color = Color.white;
+            Handles.DrawWireDisc(position, rotation * Vector3.forward, size * 1.7f, 2f);
+            Handles.color = previous;
         }
 
         /// <summary>

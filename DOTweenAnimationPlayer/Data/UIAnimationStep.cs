@@ -197,11 +197,13 @@ namespace rmf_claude.DOTweenUI
                  "Click to switch.")]
         public bool UseFrom;
 
-        [Tooltip("Absolute = the value as typed.\nBaseline = resting value captured at Awake, plus the value as an offset.")]
+        [Tooltip("Absolute = the value as typed.\nBaseline = resting value captured at Awake, plus the value as an offset. " +
+                 "Leave it at 0 to use the value the object has when the game starts.")]
         public UIAnimationEndpointMode FromMode = UIAnimationEndpointMode.Absolute;
 
         [Tooltip("Absolute = the value as typed.\n" +
-                 "Baseline = resting value captured at Awake, plus the value as an offset. Use this to land on the authored state.\n" +
+                 "Baseline = resting value captured at Awake, plus the value as an offset. Leave it at 0 to use the value " +
+                 "the object has when the game starts. Use this to land on the authored state.\n" +
                  "Current = relative to the value when the tween starts. Only offered while the button reads TO (no From).")]
         public UIAnimationEndpointMode ToMode = UIAnimationEndpointMode.Absolute;
 
@@ -379,6 +381,19 @@ namespace rmf_claude.DOTweenUI
         [NonSerialized] private bool snapshotActive;
         [NonSerialized] private string snapshotText;
         [NonSerialized] private UIAnimationMember snapshotMember;
+
+        // A third capture, for a scene saved mid-preview: where the property stands at the save, put back
+        // once the file has been written with the resting value. Apart from the snapshot, which Play-again
+        // still needs afterwards.
+        [NonSerialized] private bool hasParked;
+        [NonSerialized] private UnityEngine.Object parkedTarget;
+        [NonSerialized] private UIAnimationStepType parkedType;
+        [NonSerialized] private Vector3 parkedVector;
+        [NonSerialized] private float parkedFloat;
+        [NonSerialized] private Color parkedColor;
+        [NonSerialized] private bool parkedActive;
+        [NonSerialized] private string parkedText;
+        [NonSerialized] private UIAnimationMember parkedMember;
     #endif
 
         // Built on first use and reconfigured per build, so replaying a stepped animation does
@@ -950,6 +965,136 @@ namespace rmf_claude.DOTweenUI
             UIAnimationStepType type = baselineType;
             baselineType = snapshotType;
             snapshotType = type;
+        }
+
+        /// <summary>
+        /// Records where this step's property stands right now, for EditorUnpark - a scene being saved
+        /// mid-preview, which is written with the resting values in between. The snapshot is left alone.
+        /// </summary>
+        public void EditorPark()
+        {
+            SwapParked();
+            CaptureBaseline();
+            SwapParked();
+
+            parkedTarget = ResolvedObject(parkedType);
+            hasParked = true;
+        }
+
+        /// <summary>Writes back what EditorPark recorded, once. Skipped if the step now resolves elsewhere.</summary>
+        public void EditorUnpark()
+        {
+            if (!hasParked) return;
+            hasParked = false;
+
+            if (ResolvedObject(parkedType) != parkedTarget) return;
+
+            SwapParked();
+            RestoreBaseline();
+            SwapParked();
+        }
+
+        private void SwapParked()
+        {
+            Vector3 vector = baselineVector;
+            baselineVector = parkedVector;
+            parkedVector = vector;
+
+            float single = baselineFloat;
+            baselineFloat = parkedFloat;
+            parkedFloat = single;
+
+            Color color = baselineColor;
+            baselineColor = parkedColor;
+            parkedColor = color;
+
+            bool active = baselineActive;
+            baselineActive = parkedActive;
+            parkedActive = active;
+
+            string text = baselineText;
+            baselineText = parkedText;
+            parkedText = text;
+
+            UIAnimationMember read = baselineMember;
+            baselineMember = parkedMember;
+            parkedMember = read;
+
+            UIAnimationStepType type = baselineType;
+            baselineType = parkedType;
+            parkedType = type;
+        }
+
+        /// <summary>
+        /// A material step's Graphic shows the material it had before the preview (true) or the preview's
+        /// instance again (false) - for a scene saved mid-preview. See UIMaterialInstance.EditorShowSource.
+        /// </summary>
+        public void EditorShowSourceMaterial(bool source)
+        {
+            if (materialInstance != null) materialInstance.EditorShowSource(source);
+        }
+
+        /// <summary>
+        /// A material or Custom Property step's resting value, as CaptureBaseline last read it, and where it
+        /// was read from: the UIMaterialInstance and shader property, or the component and member. For the
+        /// editor's record session, whose Baseline and Current have to measure from exactly what playback
+        /// measures from - and which may not call a getter itself outside a click. Numbers come back in a
+        /// Vector4: a float in x, a vector in xyz, a colour as rgba. Text comes back as text. False for every
+        /// other type, and when nothing was captured.
+        /// </summary>
+        public bool EditorTryGetBaseline(out UnityEngine.Object target, out string channel, out Vector4 number, out string text)
+        {
+            target = null;
+            channel = null;
+            number = Vector4.zero;
+            text = null;
+
+            switch (baselineType)
+            {
+                case UIAnimationStepType.MaterialFloat:
+                case UIAnimationStepType.MaterialColor:
+                    if (!HasMaterial()) return false;
+
+                    target = materialInstance;
+                    channel = ShaderProperty;
+                    number = baselineType == UIAnimationStepType.MaterialFloat ? new Vector4(baselineFloat, 0f, 0f, 0f) : (Vector4)baselineColor;
+                    return true;
+
+                case UIAnimationStepType.CustomProperty:
+                    if (baselineMember == null || !baselineMember.IsAlive) return false;
+
+                    target = baselineMember.Component;
+                    channel = PropertyMember;
+                    text = baselineText;
+
+                    switch (baselineMember.Kind)
+                    {
+                        case UIAnimationPropertyKind.Vector2:
+                        case UIAnimationPropertyKind.Vector3:
+                            number = baselineVector;
+                            break;
+
+                        case UIAnimationPropertyKind.Color:
+                            number = baselineColor;
+                            break;
+
+                        // Float, Int and a counted number all keep theirs in baselineFloat.
+                        default:
+                            number = new Vector4(baselineFloat, 0f, 0f, 0f);
+                            break;
+                    }
+
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>Gives a material step's Graphic its own material back, for the end of the edit-mode preview.</summary>
+        public void EditorReleaseMaterial()
+        {
+            if (materialInstance != null) materialInstance.EditorRelease();
         }
 
         /// <summary>The resolved object a step of this type writes to, including a material's owner.</summary>

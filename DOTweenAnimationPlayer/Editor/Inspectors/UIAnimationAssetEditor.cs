@@ -59,6 +59,25 @@ namespace rmf_claude.DOTweenUI
             return player != null && player.EditorShared == asset ? player : null;
         }
 
+        /// <summary>
+        /// The Preview On player chosen for this asset, whether or not it uses the asset - for a pop-up animation
+        /// window's own Preview On field, which says so when it does not.
+        /// </summary>
+        public static UIAnimationPlayer ChosenPreviewPlayer(UIAnimationAsset asset)
+        {
+            UIAnimationPlayer player;
+            return asset != null && previewPlayers.TryGetValue(asset, out player) ? player : null;
+        }
+
+        /// <summary>Sets the Preview On player for this asset, as its Inspector's slot does.</summary>
+        public static void SetPreviewPlayer(UIAnimationAsset asset, UIAnimationPlayer player)
+        {
+            if (asset == null) return;
+
+            if (player != null) previewPlayers[asset] = player;
+            else previewPlayers.Remove(asset);
+        }
+
         private void OnEnable()
         {
             SceneView.duringSceneGui += OnSceneView;
@@ -102,6 +121,9 @@ namespace rmf_claude.DOTweenUI
         private void DrawPreview()
         {
             var asset = (UIAnimationAsset)target;
+
+            // Read back every time: a pop-up animation window can change the slot too.
+            previewPlayer = ChosenPreviewPlayer(asset);
 
             EditorGUILayout.LabelField(
                 Application.isPlaying ? "Preview" : "Preview (edit mode)", EditorStyles.boldLabel);

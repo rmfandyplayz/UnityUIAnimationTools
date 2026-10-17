@@ -7,7 +7,6 @@
 // -----------------------------------------------------------------------------
 
 using System.Collections.Generic;
-using System.Reflection;
 using DG.Tweening;
 using UnityEditor;
 using UnityEngine;
@@ -125,16 +124,17 @@ namespace rmf_claude.DOTweenUI
 
         /// <summary>
         /// The key a step's margin is kept under. One path can be on screen twice at different widths - a
-        /// player's own animation and one of its shared set's under Shared Animations, or the set in its
-        /// own Inspector - so the object and the view are part of it.
+        /// player's own animation and one of its shared set's under Shared Animations, the set in its own
+        /// Inspector, or a pop-up animation window - so the object and the view are part of it.
         /// </summary>
         private static string MarginKey(SerializedProperty property)
         {
             SerializedObject serialized = property.serializedObject;
             UIAnimationPlayer viewer = UIAnimationSharedSection.PlayerOf(serialized);
+            bool window = UIAnimationWindow.Of(serialized) != null;
 
             return serialized.targetObject.GetInstanceID() + ":" + (viewer != null ? viewer.GetInstanceID() : 0) + ":" +
-                   property.propertyPath;
+                   (window ? "w:" : string.Empty) + property.propertyPath;
         }
 
         public override float GetPropertyHeight(SerializedProperty property, GUIContent label)
@@ -774,11 +774,14 @@ namespace rmf_claude.DOTweenUI
             SerializedProperty mode = property.FindPropertyRelative(modeField);
             SerializedProperty value = property.FindPropertyRelative(ValueFieldName(label, kind));
 
+            // Only a pop-up animation window records, so only there does the row make room for the button.
+            bool inWindow = UIAnimationWindow.Of(property.serializedObject) != null;
+
             var labelRect = new Rect(r.x, r.y, LabelWidth, r.height);
             var modeRect = new Rect(r.x + LabelWidth, r.y, ModeWidth, r.height);
-            var useRect = new Rect(r.xMax - UseWidth, r.y, UseWidth, r.height);
+            var useRect = new Rect(r.xMax - (inWindow ? UseWidth : 0f), r.y, inWindow ? UseWidth : 0f, r.height);
             var valueRect = new Rect(modeRect.xMax + 4f, r.y,
-                Mathf.Max(40f, useRect.x - 2f - (modeRect.xMax + 4f)), r.height);
+                Mathf.Max(40f, useRect.x - (inWindow ? 2f : 0f) - (modeRect.xMax + 4f)), r.height);
 
             if (fromToggle != null)
             {
@@ -799,7 +802,14 @@ namespace rmf_claude.DOTweenUI
             DrawModePopup(modeRect, mode, allowCurrent || legacyCurrent,
                 ModeTooltip(isFrom, allowCurrent, legacyCurrent, kind == UIAnimationValueKind.Text));
 
-            if (kind == UIAnimationValueKind.Vector)
+            // A row being recorded shows what Finish will write instead of the stored value, read-only.
+            bool armed = inWindow && UIAnimationRecording.IsArmed(property, isFrom);
+
+            if (armed)
+            {
+                UIAnimationRecording.DrawArmedValue(valueRect, property, isFrom);
+            }
+            else if (kind == UIAnimationValueKind.Vector)
             {
                 DrawVector(valueRect, value, IsTwoDimensional(property, stepType));
             }
@@ -812,7 +822,7 @@ namespace rmf_claude.DOTweenUI
                 EditorGUI.PropertyField(valueRect, value, GUIContent.none);
             }
 
-            DrawUseCurrent(useRect, property, stepType, mode, value, isFrom);
+            if (inWindow) DrawRecordButton(useRect, property, isFrom, armed);
         }
 
         // ---------------------------------------------------------------- Custom Property
@@ -1017,403 +1027,48 @@ namespace rmf_claude.DOTweenUI
             component.serializedObject.ApplyModifiedProperties();
         }
 
-        // ---------------------------------------------------------------- Use Current
+        // ---------------------------------------------------------------- recording
 
         private const float UseWidth = 20f;
 
         private static GUIStyle useStyle;
 
-        private const string UseTooltip =
-            "Use Current Value: copies what the target holds right now into this field.\n\n" +
-            "To pose it: press Reset (or Play) above, then move, resize or recolour the object and click " +
-            "this. Selecting the object to pose it keeps the preview running - come back here to click. " +
-            "Stop and Restore puts the object back afterwards, and the value you copied stays.";
-
-        private const string NeedsPreview =
-            "\n\nOutside a preview, wherever the object sits IS its resting value, so this would always " +
-            "store 0. Press Reset (or Play) above first, change the object - selecting it to do that keeps " +
-            "the preview running - then come back and click. Stop and Restore puts it back.";
-
         /// <summary>
-        /// The record button at the end of a From or To row. It reads the step's target and writes what it
-        /// holds into the row, converted to the row's mode - as typed for Absolute, the difference from
-        /// the resting value for Baseline, the difference from where the step starts for Current - so
-        /// the step then lands exactly where the object was.
-        ///
-        /// Baseline and Current need to know the resting value, and out of a preview the resting value
-        /// is simply where the object is, which would make every reading 0. They are enabled only while
-        /// a preview runs, where the rest was captured before anything moved - which is also what lets
-        /// Stop and Restore undo the posing afterwards.
+        /// The record button at the end of a From or To row - drawn only in a pop-up animation window, the one
+        /// place a recording can run (UIAnimationRecording). Lit while the row is being recorded; clicking it
+        /// then stops recording that row.
         /// </summary>
-        private static void DrawUseCurrent(Rect rect, SerializedProperty step, UIAnimationStepType type,
-            SerializedProperty mode, SerializedProperty value, bool isFrom)
+        private static void DrawRecordButton(Rect rect, SerializedProperty step, bool isFrom, bool armed)
         {
             if (useStyle == null)
             {
                 useStyle = new GUIStyle(EditorStyles.miniButton) { padding = new RectOffset(1, 1, 1, 1) };
             }
 
-            Vector4 reading = Vector4.zero;
-            string reason;
-            bool available;
+            string reason = null;
+            bool available = armed || UIAnimationRecording.CanRecord(step, isFrom, out reason);
 
-            if (mode.hasMultipleDifferentValues)
-            {
-                available = false;
-                reason = "The selected steps use different modes.";
-            }
-            else
-            {
-                available = TryReadCurrent(step, type, (UIAnimationEndpointMode)mode.intValue, isFrom, out reading, out reason);
-            }
-
-            // Unity's own record dot: this captures a pose the way keying does in the Animation window,
-            // and it cannot be mistaken for the screen-colour eyedropper a colour field already has.
-            Texture icon = EditorGUIUtility.FindTexture(EditorGUIUtility.isProSkin ? "d_Animation.Record" : "Animation.Record");
+            Color background = GUI.backgroundColor;
+            if (armed) GUI.backgroundColor = new Color(1f, 0.45f, 0.4f);
 
             using (new EditorGUI.DisabledScope(!available))
             {
-                if (GUI.Button(rect, new GUIContent(icon), useStyle))
+                // Unity's own record dot: this captures a pose the way keying does in the Animation window, and
+                // it cannot be mistaken for the screen-colour eyedropper a colour field already has.
+                if (GUI.Button(rect, new GUIContent(UIAnimationRecording.RecordIcon), useStyle))
                 {
-                    if (type == UIAnimationStepType.CustomProperty) WritePropertyReading(step, value);
-                    else WriteReading(value, type, reading);
+                    UIAnimationRecording.Toggle(step, isFrom);
                 }
             }
+
+            GUI.backgroundColor = background;
 
             // Over the button rather than on it, so the reason still shows while it is disabled.
-            GUI.Label(rect, new GUIContent(string.Empty, available ? UseTooltip + ModeLine(mode) : reason), GUIStyle.none);
-        }
+            string tooltip = armed
+                ? "Being recorded - the field shows what Finish will write. Click to stop recording this row."
+                : available ? UIAnimationRecording.ButtonTooltip : reason;
 
-        private static string ModeLine(SerializedProperty mode)
-        {
-            switch ((UIAnimationEndpointMode)mode.intValue)
-            {
-                case UIAnimationEndpointMode.Baseline: return "\n\nBaseline: stored as the difference from the resting value.";
-                case UIAnimationEndpointMode.Current: return "\n\nCurrent: stored as the difference from where the step starts.";
-                default: return "\n\nAbsolute: copied as it is.";
-            }
-        }
-
-        /// <summary>What the button would write into this row, or false and why not.</summary>
-        private static bool TryReadCurrent(SerializedProperty step, UIAnimationStepType type, UIAnimationEndpointMode mode,
-            bool isFrom, out Vector4 reading, out string reason)
-        {
-            reading = Vector4.zero;
-            SerializedObject serialized = step.serializedObject;
-
-            UIAnimationPlayer owner = UIAnimationTargets.OwnerOf(serialized);
-            if (owner == null)
-            {
-                reason = serialized.isEditingMultipleObjects
-                    ? "Select a single object to copy values from its scene."
-                    : "A shared animation set has no scene to read from. Set Preview On below, and this reads " +
-                      "from that player's objects.";
-                return false;
-            }
-
-            if (isFrom && mode == UIAnimationEndpointMode.Current)
-            {
-                reason = "This From is set to Current, which ignores the value here.";
-                return false;
-            }
-
-            string problem;
-            Object target = UIAnimationTargets.Resolve(type,
-                step.FindPropertyRelative(UIAnimationTargets.SlotField(type)).objectReferenceValue,
-                step.FindPropertyRelative("TargetPath").stringValue, owner.gameObject, out problem);
-
-            if (type == UIAnimationStepType.CustomProperty)
-            {
-                return CanReadProperty(step, target as GameObject, mode, problem, out reason);
-            }
-
-            Vector4 live;
-            if (target == null || !ReadLive(type, target, step, out live))
-            {
-                reason = problem ?? "This step has nothing to read a value from.";
-                return false;
-            }
-
-            // A Current To only means "an offset from the start" on a step with no From; with one,
-            // playback reads it as the number typed, exactly like Absolute.
-            bool relative = mode == UIAnimationEndpointMode.Current && !step.FindPropertyRelative("UseFrom").boolValue;
-
-            if (mode == UIAnimationEndpointMode.Absolute || (mode == UIAnimationEndpointMode.Current && !relative))
-            {
-                reading = live;
-                reason = null;
-                return true;
-            }
-
-            if (!UIAnimationPreview.IsPreviewing(owner))
-            {
-                reason = (relative
-                    ? "Current stores the difference from where the step starts."
-                    : "Baseline stores the difference from the resting value.") + NeedsPreview;
-                return false;
-            }
-
-            Vector4 origin;
-            if (relative ? !TryReadStart(step, type, owner, out origin) : !TryReadRest(type, target, out origin))
-            {
-                reason = (relative ? "Current" : "Baseline") + " cannot be read back for this type of step. " +
-                         "Switch the dropdown to Absolute to copy the value as it is.";
-                return false;
-            }
-
-            reading = live - origin;
-            if (type == UIAnimationStepType.Rotation) reading = WrapAngles(reading);
-
-            reason = null;
-            return true;
-        }
-
-        /// <summary>The value the target holds right now, in the step's own terms.</summary>
-        private static bool ReadLive(UIAnimationStepType type, Object target, SerializedProperty step, out Vector4 value)
-        {
-            value = Vector4.zero;
-
-            var rect = target as RectTransform;
-            if (rect != null && UIAnimationRectState.Covers(type))
-            {
-                Vector3 read = UIAnimationRectState.Of(rect).Read(type);
-
-                // Rotation reads back as 0 to 360, so -10 would come out as 350 - and a Rotation step
-                // turns the long way round to 350. Nearest to zero is what was almost always meant.
-                value = type == UIAnimationStepType.Rotation ? WrapAngles(read) : (Vector4)read;
-                return true;
-            }
-
-            var group = target as CanvasGroup;
-            if (group != null && type == UIAnimationStepType.CanvasGroupAlpha)
-            {
-                value = new Vector4(group.alpha, 0f, 0f, 0f);
-                return true;
-            }
-
-            var graphic = target as UnityEngine.UI.Graphic;
-            if (graphic != null && type == UIAnimationStepType.GraphicColor)
-            {
-                value = graphic.color;
-                return true;
-            }
-
-            if (graphic != null && type == UIAnimationStepType.GraphicAlpha)
-            {
-                value = new Vector4(graphic.color.a, 0f, 0f, 0f);
-                return true;
-            }
-
-            var instance = target as UIMaterialInstance;
-            if (instance != null)
-            {
-                Material material = UIAnimationTargets.SourceMaterialOf(instance);
-                string property = step.FindPropertyRelative("ShaderProperty").stringValue;
-                if (material == null || string.IsNullOrEmpty(property) || !material.HasProperty(property)) return false;
-
-                if (type == UIAnimationStepType.MaterialFloat)
-                {
-                    value = new Vector4(material.GetFloat(property), 0f, 0f, 0f);
-                    return true;
-                }
-
-                if (type == UIAnimationStepType.MaterialColor)
-                {
-                    value = material.GetColor(property);
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        /// <summary>The resting value a Baseline is measured from, as the preview captured it.</summary>
-        private static bool TryReadRest(UIAnimationStepType type, Object target, out Vector4 rest)
-        {
-            rest = Vector4.zero;
-
-            var rect = target as RectTransform;
-            if (rect != null && UIAnimationRectState.Covers(type))
-            {
-                rest = UIAnimationSimulation.RestOf(rect).Read(type);
-                return true;
-            }
-
-            var group = target as CanvasGroup;
-            if (group != null)
-            {
-                rest = new Vector4(UIAnimationSimulation.RestAlphaOf(group), 0f, 0f, 0f);
-                return true;
-            }
-
-            var graphic = target as UnityEngine.UI.Graphic;
-            if (graphic != null)
-            {
-                Color color = UIAnimationSimulation.RestColorOf(graphic);
-                rest = type == UIAnimationStepType.GraphicAlpha ? new Vector4(color.a, 0f, 0f, 0f) : (Vector4)color;
-                return true;
-            }
-
-            return false;
-        }
-
-        /// <summary>Where the step starts, worked out by replaying its animation from rest.</summary>
-        private static bool TryReadStart(SerializedProperty step, UIAnimationStepType type, UIAnimationPlayer owner, out Vector4 start)
-        {
-            start = Vector4.zero;
-            if (!UIAnimationRectState.Covers(type)) return false;
-
-            int animationIndex;
-            int stepIndex;
-            List<UIAnimation> animations = UIAnimationTargets.AnimationsOf(step.serializedObject);
-
-            if (animations == null
-                || !UIAnimationTargets.TryParseStepPath(step.propertyPath, out animationIndex, out stepIndex)
-                || animationIndex >= animations.Count)
-            {
-                return false;
-            }
-
-            Vector3 value;
-            Vector3 rest;
-            if (!UIAnimationSimulation.TryStartOf(animations[animationIndex], owner.gameObject, stepIndex, out value, out rest)) return false;
-
-            start = value;
-            return true;
-        }
-
-        /// <summary>
-        /// Whether the button can copy a Custom Property - decided without reading it. A getter is
-        /// arbitrary code and this runs on every repaint, so the read waits for the click, in
-        /// WritePropertyReading. As it is only: the preview keeps no resting value for an arbitrary
-        /// member, so there is nothing to measure a Baseline or a Current offset against.
-        /// </summary>
-        private static bool CanReadProperty(SerializedProperty step, GameObject host, UIAnimationEndpointMode mode,
-            string targetProblem, out string reason)
-        {
-            if (host == null)
-            {
-                reason = targetProblem ?? "This step has nothing to read a value from.";
-                return false;
-            }
-
-            reason = UIAnimationTargets.PropertyProblemOf(step, host);
-            if (reason != null) return false;
-
-            // A Current To only means "an offset from the start" on a step with no From; with one,
-            // playback reads it as the number typed, exactly like Absolute.
-            bool relative = mode == UIAnimationEndpointMode.Current && !step.FindPropertyRelative("UseFrom").boolValue;
-
-            if (mode == UIAnimationEndpointMode.Baseline || relative)
-            {
-                reason = (relative ? "Current" : "Baseline") + " cannot be read back for this type of step. " +
-                         "Switch the dropdown to Absolute to copy the value as it is.";
-                return false;
-            }
-
-            return true;
-        }
-
-        /// <summary>The button's click on a Custom Property row: reads the member and writes it into the row.</summary>
-        private static void WritePropertyReading(SerializedProperty step, SerializedProperty value)
-        {
-            UIAnimationPlayer owner = UIAnimationTargets.OwnerOf(step.serializedObject);
-            if (owner == null) return;
-
-            string problem;
-            var host = UIAnimationTargets.Resolve(UIAnimationStepType.CustomProperty,
-                step.FindPropertyRelative("PropertyTarget").objectReferenceValue,
-                step.FindPropertyRelative("TargetPath").stringValue, owner.gameObject, out problem) as GameObject;
-
-            var kind = (UIAnimationPropertyKind)step.FindPropertyRelative("PropertyKind").intValue;
-            Component component;
-            MemberInfo member;
-
-            if (!UIAnimationProperties.TryLocate(host, step.FindPropertyRelative("PropertyComponent").stringValue,
-                    step.FindPropertyRelative("PropertyMember").stringValue, kind, out component, out member, out problem))
-            {
-                return;
-            }
-
-            object read;
-
-            try
-            {
-                read = UIAnimationProperties.Read(component, member);
-            }
-            catch (System.Exception exception)
-            {
-                // Reflection wraps whatever the getter threw.
-                System.Exception cause = exception.InnerException ?? exception;
-                UIAnimationLog.Warn("Use Current Value", "NOTHING WAS COPIED.",
-                    "Reading " + UIAnimationProperties.Describe(component.GetType().FullName, member.Name, kind) +
-                    " threw " + cause.GetType().Name + " (" + cause.Message + ").", component);
-                return;
-            }
-
-            switch (kind)
-            {
-                case UIAnimationPropertyKind.Float:
-                    value.floatValue = (float)read;
-                    break;
-
-                case UIAnimationPropertyKind.Int:
-                    value.floatValue = (int)read;
-                    break;
-
-                case UIAnimationPropertyKind.Vector2:
-                {
-                    // Z is never shown for a Vector2, so it is left as it was rather than zeroed.
-                    var read2 = (Vector2)read;
-                    value.vector3Value = new Vector3(read2.x, read2.y, value.vector3Value.z);
-                    break;
-                }
-
-                case UIAnimationPropertyKind.Vector3:
-                    value.vector3Value = (Vector3)read;
-                    break;
-
-                case UIAnimationPropertyKind.Color:
-                    value.colorValue = (Color)read;
-                    break;
-
-                case UIAnimationPropertyKind.Text:
-                    value.stringValue = (string)read ?? string.Empty;
-                    break;
-
-                default:
-                    value.floatValue = UIAnimationProperties.ParseNumber((string)read);
-                    break;
-            }
-        }
-
-        private static Vector4 WrapAngles(Vector4 angles)
-        {
-            return new Vector4(Mathf.DeltaAngle(0f, angles.x), Mathf.DeltaAngle(0f, angles.y), Mathf.DeltaAngle(0f, angles.z), 0f);
-        }
-
-        private static void WriteReading(SerializedProperty value, UIAnimationStepType type, Vector4 reading)
-        {
-            switch (value.propertyType)
-            {
-                case SerializedPropertyType.Vector3:
-                {
-                    // Z is never shown on the rect views, so it is left as it was rather than zeroed.
-                    Vector3 current = value.vector3Value;
-                    value.vector3Value = UIAnimationStep.IsTwoDimensional(type)
-                        ? new Vector3(reading.x, reading.y, current.z)
-                        : new Vector3(reading.x, reading.y, reading.z);
-                    break;
-                }
-
-                case SerializedPropertyType.Float:
-                    value.floatValue = reading.x;
-                    break;
-
-                case SerializedPropertyType.Color:
-                    value.colorValue = reading;
-                    break;
-            }
+            GUI.Label(rect, new GUIContent(string.Empty, tooltip), GUIStyle.none);
         }
 
         private static readonly string[] ModeNames = { "Absolute", "Baseline", "Current" };
@@ -1421,8 +1076,8 @@ namespace rmf_claude.DOTweenUI
         private const string AbsoluteLine = "Absolute = the value as typed.";
 
         private const string BaselineLine =
-            "Baseline = the resting value (captured at Awake), plus the value as an offset. Use this to " +
-            "land on the authored state.";
+            "Baseline = the resting value (captured at Awake), plus the value as an offset. Leave it at 0 to " +
+            "use the value the object has when the game starts. Use this to land on the authored state.";
 
         /// <summary>
         /// What the options in one mode dropdown mean - only the options that dropdown actually offers,
