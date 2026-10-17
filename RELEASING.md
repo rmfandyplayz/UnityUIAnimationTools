@@ -7,12 +7,7 @@
 
 **Publishing means copying `main` into `release`.**
 
-## Before publishing
-
-- **Test it in `GameCraftSep2026Jam`.**
-- **Make sure everything is committed and pushed to `main`.** Every new script comes with a `.meta` file, and those have to go up too. Projects that install from GitHub quietly ignore any file whose `.meta` is missing.
-
-## Publishing (GitHub website, recommended)
+## Publishing
 
 1. Open this link:
    **https://github.com/rmfandyplayz/UnityUIAnimationTools/compare/release...main**
@@ -33,13 +28,3 @@ In Unity:
 3. Click **Update** at the top right.
 
 The **refresh** button under the package list does *not* check for these updates. It only looks at Unity's own packages. Use **Update**.
-
-## The version number
-
-`DOTweenAnimationPlayer/package.json` has a `version` line, and it's the number Package Manager shows. It's how you can tell which release a project has. **Claude bumps it whenever it changes the tool, so you don't need to.**
-
-If you change the tool's code yourself, bump it too, before publishing. On the website, open the file, click the pencil icon, change the number and commit. How to pick the new number:
-
-- **1.0.1 → 1.0.2**: bug fixes.
-- **1.0.1 → 1.1.0**: something new was added.
-- **1.0.1 → 2.0.0**: something that could break animations people already made.
