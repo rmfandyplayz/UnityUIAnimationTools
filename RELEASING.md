@@ -3,16 +3,13 @@
 | Branch | What it is |
 | --- | --- |
 | `main` | All internal changes. Users don't see this. |
-| `release` | What projects install. It only changes when published. |
+| `release` | What projects install. It only changes when published. It's the repo's default branch, so it's what visitors see first. |
 
 **Publishing means copying `main` into `release`.**
 
-## Before publishing
+Because `release` is the default, GitHub picks it as the target of every new pull request. **Any pull request that isn't a release should target `main`**: check the **base** dropdown when opening one.
 
-- **Test it in `GameCraftSep2026Jam`.**
-- **Make sure everything is committed and pushed to `main`.** Every new script comes with a `.meta` file, and those have to go up too. Projects that install from GitHub quietly ignore any file whose `.meta` is missing.
-
-## Publishing (GitHub website, recommended)
+## Publishing
 
 1. Open this link:
    **https://github.com/rmfandyplayz/UnityUIAnimationTools/compare/release...main**
@@ -22,7 +19,17 @@
 4. Click **Merge pull request**, then **Confirm merge**.
    - The green button must say **Merge pull request**. If it says *Squash and merge* or *Rebase and merge*, click the little arrow beside it and choose **Create a merge commit**. The other two can make the *next* release run into conflicts.
 
-Done. The pull request stays on the repo's **Pull requests → Closed** tab, which doubles as a release history.
+The pull request stays on the repo's **Pull requests → Closed** tab, which doubles as a release history.
+
+## After publishing: catch `main` up
+
+The merge in step 4 makes a commit that only `release` has, so GitHub will show `main` as "1 commit behind `release`". To clear it, run this in the repo folder:
+
+```bash
+git checkout main && git pull && git merge --ff-only origin/release && git push
+```
+
+It only moves `main` forward to the merge commit; nothing is rewritten. It's optional. Skipping it does no harm, and the next release works either way.
 
 ## Updating a project
 
@@ -33,13 +40,3 @@ In Unity:
 3. Click **Update** at the top right.
 
 The **refresh** button under the package list does *not* check for these updates. It only looks at Unity's own packages. Use **Update**.
-
-## The version number
-
-`DOTweenAnimationPlayer/package.json` has a `version` line, and it's the number Package Manager shows. It's how you can tell which release a project has. **Claude bumps it whenever it changes the tool, so you don't need to.**
-
-If you change the tool's code yourself, bump it too, before publishing. On the website, open the file, click the pencil icon, change the number and commit. How to pick the new number:
-
-- **1.0.1 → 1.0.2**: bug fixes.
-- **1.0.1 → 1.1.0**: something new was added.
-- **1.0.1 → 2.0.0**: something that could break animations people already made.
