@@ -23,13 +23,7 @@ The pull request stays on the repo's **Pull requests → Closed** tab, which dou
 
 ## After publishing: catch `main` up
 
-The merge in step 4 makes a commit that only `release` has, so GitHub will show `main` as "1 commit behind `release`". To clear it, run this in the repo folder:
-
-```bash
-git checkout main && git pull && git merge --ff-only origin/release && git push
-```
-
-It only moves `main` forward to the merge commit; nothing is rewritten. It's optional. Skipping it does no harm, and the next release works either way.
+The merge in step 4 makes a commit that only `release` has, so GitHub will show `main` as "1 commit behind `release`". To clear it, make a PR that merges release into main. It only moves `main` forward to the merge commit; nothing is rewritten. Skipping it does no harm, and the next release works either way (this is purely optional).
 
 ## Updating a project
 
