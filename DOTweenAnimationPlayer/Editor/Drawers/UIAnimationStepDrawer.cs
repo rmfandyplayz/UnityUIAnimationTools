@@ -167,6 +167,7 @@ namespace rmf_claude.DOTweenUI
             }
 
             DrawBand(position, property);
+            NoteSelection(position, property);
 
             EditorGUI.BeginProperty(position, label, property);
 
@@ -199,6 +200,27 @@ namespace rmf_claude.DOTweenUI
             EditorGUI.DrawRect(
                 new Rect(position.x - BandLeft, position.y - BandTop, position.width + BandLeft + BandRight, position.height),
                 EditorGUIUtility.isProSkin ? BandDark : BandLight);
+        }
+
+        private static readonly Color SelectedBar = new Color(0.3f, 0.62f, 1f, 1f);
+        private const float SelectedBarWidth = 3f;
+
+        /// <summary>
+        /// A click anywhere on the step - its header, a field, the margin the list's drag handle sits in -
+        /// makes it the Scene gizmos' selected step, and a bar down the row's left edge marks the one that
+        /// is. Looked at before anything inside gets the click, since a field takes it for itself.
+        /// </summary>
+        private static void NoteSelection(Rect position, SerializedProperty property)
+        {
+            var row = new Rect(position.x - BandLeft, position.y - BandTop, position.width + BandLeft + BandRight, position.height);
+            Event e = Event.current;
+
+            if (e.type == EventType.MouseDown && row.Contains(e.mousePosition)) UIAnimationGizmos.Select(property);
+
+            if (e.type == EventType.Repaint && UIAnimationGizmos.ShowsAsSelected(property))
+            {
+                EditorGUI.DrawRect(new Rect(row.x, row.y, SelectedBarWidth, row.height), SelectedBar);
+            }
         }
 
         // How far the band reaches past the rect the list hands this drawer, so it fills exactly the

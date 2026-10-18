@@ -266,6 +266,16 @@ namespace rmf_claude.DOTweenUI
             public UIAnimationRectState Frame;
 
             /// <summary>
+            /// The whole rect at the step's first and last moments, once every step acting then has acted:
+            /// what its From and To outlines are drawn from. Kept even when no Moments are.
+            /// </summary>
+            public UIAnimationRectState StartFrame;
+            public UIAnimationRectState EndFrame;
+
+            /// <summary>The property's resting value, which a Baseline endpoint is an offset from.</summary>
+            public Vector3 Rest;
+
+            /// <summary>
             /// Whether Start is the step's own authored From, rather than wherever the steps before it
             /// left the object - only then is there a stored value behind it to change.
             /// </summary>
@@ -285,7 +295,6 @@ namespace rmf_claude.DOTweenUI
             internal float Ends;
             internal bool Started;
             internal bool Finished;
-            internal Vector3 Rest;
             internal bool Snaps;
             internal readonly List<float> RouteLength = new List<float>();
         }
@@ -533,6 +542,9 @@ namespace rmf_claude.DOTweenUI
                 for (int i = 0; i < into.Count; i++)
                 {
                     Track track = into[i];
+
+                    if (Mathf.Abs(track.Begins - now) < Epsilon) track.StartFrame = states[track.Rect];
+                    if (Mathf.Abs(track.Ends - now) < Epsilon) track.EndFrame = states[track.Rect];
 
                     for (int m = 0; m < moments; m++)
                     {
