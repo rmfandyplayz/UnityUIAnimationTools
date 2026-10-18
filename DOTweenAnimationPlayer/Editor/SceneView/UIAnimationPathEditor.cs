@@ -30,15 +30,19 @@ namespace rmf_claude.DOTweenUI
     ///
     /// Only position steps can be edited here. SizeDelta, OffsetMin/Max and Scale paths are real,
     /// but they are paths through a size or a scale, and there is no honest place to draw one.
+    ///
+    /// Its handles are the Scene gizmos' own (UIAnimationHandles): a ring for From, a dot for To and for
+    /// each point, a white ring round the one under the mouse, and the line in To's mode's style.
     /// </summary>
     [InitializeOnLoad]
     internal static class UIAnimationPathEditor
     {
         private static readonly Color PathColor = new Color(1f, 0.62f, 0.15f, 1f);
         private static readonly Color InsertColor = new Color(1f, 0.62f, 0.15f, 0.55f);
-        private static readonly Color StartColor = new Color(0.75f, 0.75f, 0.75f, 1f);
-        private static readonly Color EndColor = new Color(0.35f, 0.85f, 0.45f, 1f);
         private static readonly Color DeleteColor = new Color(1f, 0.25f, 0.2f, 1f);
+
+        // A point is a smaller dot than To, so the ends stand out from the points between them.
+        private const float PointSize = 0.035f;
 
         private const int SamplesPerSegment = 16;
 
@@ -58,8 +62,6 @@ namespace rmf_claude.DOTweenUI
         private static readonly List<Vector3> curve = new List<Vector3>();
         private static readonly List<int> curveIndex = new List<int>();
         private static readonly List<Vector3> samples = new List<Vector3>();
-
-        private static GUIStyle labelStyle;
 
         static UIAnimationPathEditor()
         {
@@ -354,7 +356,7 @@ namespace rmf_claude.DOTweenUI
                 samples.Add(curve[curve.Count - 1]);
 
                 Handles.color = PathColor;
-                Handles.DrawAAPolyLine(3f, samples.ToArray());
+                UIAnimationHandles.PolyLine(samples, 3f, IsRelative(step) ? UIAnimationHandles.LineStyle.Dotted : UIAnimationHandles.StyleOf(toMode));
             }
 
             bool changed = false;
@@ -368,7 +370,7 @@ namespace rmf_claude.DOTweenUI
                 float size = HandleUtility.GetHandleSize(middle) * 0.035f;
 
                 Handles.color = InsertColor;
-                if (Handles.Button(middle, plane.Rotation, size, size * 1.6f, Handles.DotHandleCap))
+                if (Handles.Button(middle, plane.Rotation, size, size, UIAnimationHandles.SolidCap))
                 {
                     // Segment j runs from value j to value j + 1, and value j + 1 is point j (or To),
                     // so the new point goes in at index j. Returns at once: every handle below is
@@ -377,7 +379,7 @@ namespace rmf_claude.DOTweenUI
                     return true;
                 }
 
-                Label(middle, "+", 0f);
+                UIAnimationHandles.Label(middle, "+", 0f);
             }
 
             // Start: a handle when there is an authored From to move, a marker when there is not.
@@ -387,23 +389,23 @@ namespace rmf_claude.DOTweenUI
             {
                 Vector3 moved;
                 bool unused;
-                if (PointHandle(startWorld, plane, 0.09f, Handles.CircleHandleCap, StartColor, false, out moved, out unused))
+                if (PointHandle(startWorld, plane, UIAnimationHandles.StartSize, UIAnimationHandles.WireCap, PathColor, false, out moved, out unused))
                 {
                     from.vector3Value = plane.ToAuthored(moved, fromOrigin, from.vector3Value);
                     changed = true;
                 }
 
-                Label(startWorld, "From", 18f);
+                UIAnimationHandles.Label(startWorld, "From", 18f);
             }
             else
             {
                 if (e.type == EventType.Repaint)
                 {
-                    Handles.color = StartColor;
-                    Handles.CircleHandleCap(0, startWorld, plane.Rotation, HandleUtility.GetHandleSize(startWorld) * 0.07f, EventType.Repaint);
+                    Handles.color = PathColor;
+                    UIAnimationHandles.WireCap(0, startWorld, plane.Rotation, HandleUtility.GetHandleSize(startWorld) * UIAnimationHandles.StartSize, EventType.Repaint);
                 }
 
-                Label(startWorld, "Start", 18f);
+                UIAnimationHandles.Label(startWorld, "Start", 18f);
             }
 
             int remove = -1;
@@ -415,7 +417,7 @@ namespace rmf_claude.DOTweenUI
 
                 Vector3 moved;
                 bool delete;
-                if (PointHandle(world, plane, 0.05f, Handles.DotHandleCap, PathColor, true, out moved, out delete))
+                if (PointHandle(world, plane, PointSize, UIAnimationHandles.SolidCap, PathColor, true, out moved, out delete))
                 {
                     point.vector3Value = plane.ToAuthored(moved, toOrigin, point.vector3Value);
                     changed = true;
@@ -423,7 +425,7 @@ namespace rmf_claude.DOTweenUI
 
                 if (delete) remove = i;
 
-                Label(world, (i + 1).ToString(), 16f);
+                UIAnimationHandles.Label(world, (i + 1).ToString(), 16f);
             }
 
             if (remove >= 0)
@@ -436,13 +438,13 @@ namespace rmf_claude.DOTweenUI
 
             Vector3 movedEnd;
             bool noDelete;
-            if (PointHandle(endWorld, plane, 0.09f, Handles.CircleHandleCap, EndColor, false, out movedEnd, out noDelete))
+            if (PointHandle(endWorld, plane, UIAnimationHandles.EndSize, UIAnimationHandles.SolidCap, PathColor, false, out movedEnd, out noDelete))
             {
                 to.vector3Value = plane.ToAuthored(movedEnd, toOrigin, to.vector3Value);
                 changed = true;
             }
 
-            Label(endWorld, "To", 18f);
+            UIAnimationHandles.Label(endWorld, "To", 18f);
 
             return changed;
         }
@@ -503,40 +505,6 @@ namespace rmf_claude.DOTweenUI
             Handles.EndGUI();
 
             return done;
-        }
-
-        /// <summary>
-        /// A point's name, lifted clear of it by a fixed number of pixels. Drawn with a dark shadow
-        /// because the start point sits on the object itself, and white text on a white Image is
-        /// simply not there.
-        /// </summary>
-        internal static void Label(Vector3 world, string text, float liftPixels)
-        {
-            if (Event.current.type != EventType.Repaint) return;
-
-            if (labelStyle == null)
-            {
-                labelStyle = new GUIStyle(EditorStyles.whiteBoldLabel)
-                {
-                    alignment = TextAnchor.MiddleCenter,
-                };
-            }
-
-            // At least as wide as before, so the path editor's short labels sit exactly where they did.
-            float width = Mathf.Max(80f, labelStyle.CalcSize(new GUIContent(text)).x + 8f);
-
-            Vector2 at = HandleUtility.WorldToGUIPoint(world);
-            var rect = new Rect(at.x - width * 0.5f, at.y - 9f - liftPixels, width, 18f);
-
-            Handles.BeginGUI();
-
-            Color previous = GUI.color;
-            GUI.color = new Color(0f, 0f, 0f, 0.85f);
-            GUI.Label(new Rect(rect.x + 1f, rect.y + 1f, rect.width, rect.height), text, labelStyle);
-            GUI.color = previous;
-            GUI.Label(rect, text, labelStyle);
-
-            Handles.EndGUI();
         }
 
         /// <summary>"Show, step 2" - which animation and which step the overlay is editing.</summary>

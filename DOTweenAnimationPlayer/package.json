@@ -1,6 +1,6 @@
 {
   "name": "com.rmfandyplayz.dotween-ui-animation",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "displayName": "DOTween UI Animation Player",
   "description": "Inspector-authored DOTween animations for UGUI, played by name. Requires DOTween Pro, with Setup DOTween and Create ASMDEF run from the DOTween Utility Panel.",
   "unity": "2022.3",
